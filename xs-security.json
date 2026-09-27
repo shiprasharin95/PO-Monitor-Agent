@@ -1,0 +1,26 @@
+{
+  "xsappname": "po-monitor-demo-${space}",
+  "tenant-mode": "dedicated",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.User",
+      "description": "PO Monitor User"
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "Token_Exchange",
+      "description": "role for support of token exchange",
+      "scope-references": [
+        "uaa.user"
+      ]
+    },
+    {
+      "name": "POMonitorUser",
+      "description": "PO Monitor User",
+      "scope-references": [
+        "$XSAPPNAME.User"
+      ]
+    }
+  ]
+}

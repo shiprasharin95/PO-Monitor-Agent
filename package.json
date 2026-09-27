@@ -1,0 +1,35 @@
+{
+  "name": "po-monitor-demo",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js",
+    "watch": "cds watch"
+  },
+  "dependencies": {
+    "@cap-js/hana": "^1.9.2",
+    "@sap-ai-sdk/orchestration": "^2.16.0",
+    "@sap-cloud-sdk/connectivity": "^4.9.1",
+    "@sap-cloud-sdk/http-client": "^4.9.1",
+    "@sap-cloud-sdk/resilience": "^4.9.1",
+    "@sap/cds": "^8",
+    "axios": "^1.6.0"
+  },
+  "cds": {
+    "requires": {
+      "auth": "mocked",
+      "destination": {
+        "kind": "destination"
+      },
+      "GraphMail": {
+        "kind": "rest",
+        "senderMailbox": "shipra.sharin@bearingpoint.com",
+        "credentials": {
+          "destination": "Graph-Mail-Destination"
+        }
+      }
+    }
+  },
+  "sapux": [
+    "app/po-monitor-ui"
+  ]
+}

@@ -1,0 +1,70 @@
+_schema-version: "3.3.0"
+ID: po-monitor-demo-test
+version: 1.0.0
+description: PO UnBooked Quantity Monitor Agent - CAP demo - test
+parameters:
+  enable-parallel-deployments: true
+
+modules:
+  - name: po-monitor-srv-test
+    type: nodejs
+    path: .
+    parameters:
+      buildpack: nodejs_buildpack
+      memory: 512M
+    build-parameters:
+      builder: npm-ci
+    provides:
+      - name: srv-api
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: po-monitor-destination-test
+      - name: po-monitor-xsuaa-test
+      - name: po-monitor-demo-db
+
+  - name: po-monitor-ui-test
+    type: html5
+    path: app/po-monitor-ui
+    build-parameters:
+      build-result: webapp
+      builder: custom
+      commands:
+        - npm install
+      supported-platforms:
+        []
+  - name: po-monitor-demo-db-deployer
+    type: hdb
+    path: gen/db
+    parameters:
+      buildpack: nodejs_buildpack
+    requires:
+      - name: po-monitor-demo-db
+
+resources:
+  - name: po-monitor-destination-test
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+      # NOTE: destinations S4HC_JournalEntry and GENERATIVE_AI_HUB are configured
+      # separately in the BTP cockpit / destination service and are NOT created here.
+
+  - name: po-monitor-xsuaa-test
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+  - name: po-monitor-demo-db
+    type: com.sap.xs.hdi-container
+    parameters:
+      service: hana
+      service-plan: hdi-shared
+      service-name: po-monitor-hana
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm ci
+        - npx cds build --production

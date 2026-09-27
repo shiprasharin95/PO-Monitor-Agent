@@ -1,0 +1,19 @@
+applications:
+  - name: po-monitor-demo-test
+    path: .
+    buildpacks:
+      - nodejs_buildpack
+    memory: 512M
+    disk_quota: 512M
+    instances: 1
+    command: npm start
+    services:
+      - cap-rest-destination
+      - Job_Scheduling
+      - po-monitor-hana
+    env:
+      NODE_ENV: production
+      JOB_SCHEDULE_CRON: "0 6 * * 1-5"
+      MAIL_FROM: shipra.sharin@bearingpoint.com
+      DEFAULT_OWNER_EMAIL: ""
+      ENTERPRISE_PROJECT_PATH: /sap/opu/odata/sap/API_ENTERPRISE_PROJECT_SRV/A_EnterpriseProject

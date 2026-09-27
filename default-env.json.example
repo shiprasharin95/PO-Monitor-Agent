@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy this file to default-env.json (which is gitignored) for LOCAL testing only. Fill in your OWN values - never commit real secrets. In BTP/Cloud Foundry, the bound destination service already resolves S4HC_JournalEntry and GENERATIVE_AI_HUB, so this file is not needed there.",
+  "destinations": "[{\"name\":\"S4HC_JournalEntry\",\"url\":\"<your S4HANA Cloud system URL>\",\"authentication\":\"BasicAuthentication\",\"username\":\"<user>\",\"password\":\"<password>\"},{\"name\":\"GENERATIVE_AI_HUB\",\"url\":\"<your AI Core / Orchestration service URL>\",\"authentication\":\"OAuth2ClientCredentials\",\"clientId\":\"<clientid>\",\"clientSecret\":\"<clientsecret>\",\"tokenServiceURL\":\"<AI Core UAA token endpoint>/oauth/token\"}]"
+}

@@ -1,0 +1,7 @@
+node_modules/
+gen/
+default-env.json
+.env
+*.log
+dist/
+.cds-services.json
