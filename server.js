@@ -8,7 +8,7 @@ cds.on('bootstrap', app => {
 
   app.post('/run', async (req, res) => {
     try {
-      const result = await fetchAndSummarizeOpenPOs();
+      const result = await fetchAndSummarizeOpenPOs({ processNotifications: true });
       return res.status(200).json({
         status: 'OK',
         source: 'job-scheduler',

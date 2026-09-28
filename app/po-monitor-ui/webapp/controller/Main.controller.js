@@ -15,10 +15,9 @@ sap.ui.define([
         pos: [],
         allPos: [],
         summary: '',
-        count: 0,
+        visibleCount: 0,
         busy: false,
         search: '',
-        deliveryFilter: 'all',
         columns: {
           purchaseOrder: true,
           item: true,
@@ -33,6 +32,9 @@ sap.ui.define([
           wbsElement: true,
           workPackage: true,
           projectManagerEmail: true,
+          lastNotified: true,
+          resolved: true,
+          notificationStatus: true,
           completelyDelivered: true
         }
       }), 'monitor');
@@ -59,10 +61,9 @@ sap.ui.define([
             pos: data.pos || [],
             allPos: data.pos || [],
             summary: data.summary || '',
-            count: data.count || 0,
+            visibleCount: (data.pos || []).length,
             busy: false,
             search: '',
-            deliveryFilter: 'all',
             columns: oModel.getProperty('/columns')
           });
           MessageToast.show(`Retrieved ${data.count || 0} open PO(s)`);
@@ -71,23 +72,16 @@ sap.ui.define([
           oModel.setProperty('/busy', false);
           MessageBox.error(`Failed to retrieve open POs: ${err.message}`);
         });
-    }
-,
+    },
 
     onSearch: function (oEvent) {
       this.getView().getModel('monitor').setProperty('/search', oEvent.getParameter('newValue') || '');
       this._applyFilters();
     },
 
-    onDeliveryFilter: function (oEvent) {
-      this.getView().getModel('monitor').setProperty('/deliveryFilter', oEvent.getSource().getSelectedKey());
-      this._applyFilters();
-    },
-
     _applyFilters: function () {
       const oModel = this.getView().getModel('monitor');
       const search = (oModel.getProperty('/search') || '').toLowerCase().trim();
-      const deliveryFilter = oModel.getProperty('/deliveryFilter') || 'all';
       const allPos = oModel.getProperty('/allPos') || [];
       const filtered = allPos.filter(po => {
         const searchable = [
@@ -102,14 +96,11 @@ sap.ui.define([
           po.projectManagerName,
           po.projectManagerEmail
         ].join(' ').toLowerCase();
-        const matchesSearch = !search || searchable.includes(search);
-        const matchesDelivery = deliveryFilter === 'all'
-          || (deliveryFilter === 'open' && po.isCompletelyDelivered === false)
-          || (deliveryFilter === 'delivered' && po.isCompletelyDelivered === true);
-        return matchesSearch && matchesDelivery;
+        return !search || searchable.includes(search);
       });
 
       oModel.setProperty('/pos', filtered);
+      oModel.setProperty('/visibleCount', filtered.length);
     },
 
     onColumnSettings: function (oEvent) {
@@ -129,6 +120,9 @@ sap.ui.define([
           ['wbsElement', 'WBS Element'],
           ['workPackage', 'Work Package'],
           ['projectManagerEmail', 'Project Manager Email'],
+          ['lastNotified', 'Last Notified'],
+          ['resolved', 'Resolved'],
+          ['notificationStatus', 'Notification Status'],
           ['completelyDelivered', 'Completely Delivered']
         ];
         const checkboxes = definitions.map(([key, label]) => new CheckBox({

@@ -53,13 +53,53 @@ async function getLog(tx, purchaseOrder, item) {
   );
 }
 
+async function attachTrackingState(pos, now = new Date()) {
+  if (!cds.db || !hasHanaBinding()) {
+    return pos.map(po => ({
+      ...po,
+      lastNotified: null,
+      resolved: null,
+      notificationEligible: null,
+      notificationStatus: 'tracking-unavailable'
+    }));
+  }
+
+  try {
+    const logs = await cds.db.run(SELECT.from(getLogEntity()));
+    const logByKey = new Map(logs.map(log => [`${log.purchaseOrder}:${log.item}`, log]));
+
+    return pos.map(po => {
+      const log = logByKey.get(`${po.purchaseOrder}:${po.item}`);
+      const eligible = isEligibleForNotification(log, now);
+      return {
+        ...po,
+        lastNotified: log?.lastNotified || null,
+        resolved: log ? Boolean(log.resolved) : false,
+        notificationEligible: eligible,
+        notificationStatus: log?.resolved
+          ? 'resolved'
+          : eligible ? 'eligible' : 'suppressed-under-5-working-days'
+      };
+    });
+  } catch (error) {
+    console.error('[PO] Could not load notification tracking state for UI.', error);
+    return pos.map(po => ({
+      ...po,
+      lastNotified: null,
+      resolved: null,
+      notificationEligible: null,
+      notificationStatus: 'tracking-unavailable'
+    }));
+  }
+}
+
 async function findCandidates(pos, now = new Date()) {
   if (!cds.db || !hasHanaBinding()) {
     return {
       enabled: false,
       reason: 'HANA Cloud service is not bound; tracking is running in dry-run mode.',
-      eligible: pos,
-      skipped: []
+      eligible: [],
+      skipped: pos
     };
   }
 
@@ -100,7 +140,7 @@ async function autoResolveTrackedItems(fetchStatus, resolvedDate = new Date()) {
   return resolvedCount;
 }
 
-async function recordNotification(purchaseOrder, item, notifiedAt = new Date()) {
+async function recordNotification(purchaseOrder, item, recipientEmail, notifiedAt = new Date()) {
   if (!cds.db || !hasHanaBinding()) {
     throw new Error('Cannot record notification: HANA Cloud service is not bound.');
   }
@@ -112,6 +152,7 @@ async function recordNotification(purchaseOrder, item, notifiedAt = new Date()) 
     await tx.run(INSERT.into(getLogEntity()).entries({
       purchaseOrder,
       item,
+      recipientEmail,
       firstNotified: notifiedAt,
       lastNotified: notifiedAt,
       resolved: false,
@@ -122,7 +163,7 @@ async function recordNotification(purchaseOrder, item, notifiedAt = new Date()) 
 
   await tx.run(
     UPDATE(getLogEntity())
-      .set({ lastNotified: notifiedAt, resolved: false, resolvedDate: null })
+      .set({ recipientEmail, lastNotified: notifiedAt, resolved: false, resolvedDate: null })
       .where({ purchaseOrder, item })
   );
 }
@@ -141,6 +182,7 @@ async function markResolved(purchaseOrder, item, resolvedDate = new Date()) {
 
 module.exports = {
   addWorkingDays,
+  attachTrackingState,
   autoResolveTrackedItems,
   findCandidates,
   isEligibleForNotification,

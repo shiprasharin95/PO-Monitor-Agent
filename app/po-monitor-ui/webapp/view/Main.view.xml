@@ -2,51 +2,53 @@
   controllerName="demo.controller.Main"
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
-  xmlns:core="sap.ui.core"
   height="100%"
 >
-  <Page title="PO UnBooked Quantity Monitor Agent">
+  <Page title="PO UnBooked Quantity Monitor Agent" class="poMonitorPage">
     <content>
-      <VBox class="sapUiSmallMargin" busy="{monitor>/busy}">
-        <Toolbar class="sapUiSmallMarginBottom">
-          <Button text="GO" type="Emphasized" press="onGoPress" icon="sap-icon://refresh"/>
+      <VBox class="sapUiSmallMargin poMonitorShell" busy="{monitor>/busy}">
+        <OverflowToolbar class="poActionToolbar sapUiSmallMarginBottom">
+          <Button text="Go" type="Emphasized" press="onGoPress" icon="sap-icon://refresh" tooltip="Fetch overdue purchase order items"/>
           <ToolbarSeparator/>
-          <SearchField width="18rem" placeholder="Search PO, material, WBS or manager" liveChange="onSearch"/>
-          <Select width="11rem" change="onDeliveryFilter" selectedKey="all" tooltip="Delivery status filter">
-            <items>
-              <core:Item key="all" text="All delivery status"/>
-              <core:Item key="open" text="Open only"/>
-              <core:Item key="delivered" text="Delivered only"/>
-            </items>
-          </Select>
+          <SearchField width="20rem" placeholder="Search PO, material, WBS or manager" liveChange="onSearch"/>
           <ToolbarSpacer/>
           <Button icon="sap-icon://action-settings" type="Transparent" press="onColumnSettings" tooltip="Column settings"/>
-        </Toolbar>
+        </OverflowToolbar>
 
-        <Text id="summary" text="{monitor>/summary}" class="sapUiSmallMarginBottom"/>
+        <Text id="summary" text="{monitor>/summary}" maxLines="5" class="poSummary sapUiSmallMarginBottom"/>
 
         <ScrollContainer horizontal="true" vertical="false" width="100%">
-          <Table id="poTable" width="140rem" fixedLayout="false" items="{monitor>/pos}" noDataText="No matching open POs.">
+          <Table id="poTable" class="poMonitorTable" width="100%" fixedLayout="true" growing="true" growingThreshold="25" sticky="ColumnHeaders,HeaderToolbar" items="{monitor>/pos}" noDataText="No overdue purchase order items found.">
+            <headerToolbar>
+              <OverflowToolbar class="poTableToolbar">
+                <Title text="Open purchase order items" level="H3"/>
+                <ToolbarSpacer/>
+                <ObjectStatus text="{monitor>/visibleCount} items" state="Information" icon="sap-icon://table-view"/>
+              </OverflowToolbar>
+            </headerToolbar>
             <columns>
-            <Column visible="{monitor>/columns/purchaseOrder}"><Text text="Purchase Order"/></Column>
-            <Column visible="{monitor>/columns/item}"><Text text="Item"/></Column>
-            <Column hAlign="End" visible="{monitor>/columns/orderQuantity}"><Text text="Order Qty"/></Column>
-            <Column hAlign="End" visible="{monitor>/columns/openQuantity}"><Text text="Open QTY"/></Column>
-            <Column visible="{monitor>/columns/unit}"><Text text="Unit"/></Column>
-            <Column visible="{monitor>/columns/material}"><Text text="Material Number"/></Column>
-            <Column visible="{monitor>/columns/materialDescription}"><Text text="Material Description"/></Column>
-            <Column visible="{monitor>/columns/performancePeriod}"><Text text="End of Performance Period"/></Column>
-            <Column visible="{monitor>/columns/servicePerformer}"><Text text="Service Performer"/></Column>
-            <Column visible="{monitor>/columns/servicePerformerName}"><Text text="Service Performer Name"/></Column>
-            <Column visible="{monitor>/columns/wbsElement}"><Text text="WBS Element"/></Column>
-            <Column visible="{monitor>/columns/workPackage}"><Text text="Work Package"/></Column>
-            <Column visible="{monitor>/columns/projectManagerEmail}"><Text text="Project Manager Email"/></Column>
-            <Column visible="{monitor>/columns/completelyDelivered}"><Text text="Completely Delivered"/></Column>
+            <Column width="9rem" visible="{monitor>/columns/purchaseOrder}"><Text text="Purchase Order"/></Column>
+            <Column width="5rem" visible="{monitor>/columns/item}"><Text text="Item"/></Column>
+            <Column width="7rem" hAlign="End" visible="{monitor>/columns/orderQuantity}"><Text text="Order Qty"/></Column>
+            <Column width="7rem" hAlign="End" visible="{monitor>/columns/openQuantity}"><Text text="Open Qty"/></Column>
+            <Column width="5rem" visible="{monitor>/columns/unit}"><Text text="Unit"/></Column>
+            <Column width="9rem" visible="{monitor>/columns/material}"><Text text="Material Number"/></Column>
+            <Column width="16rem" visible="{monitor>/columns/materialDescription}"><Text text="Material Description"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/performancePeriod}"><Text text="End of Performance Period"/></Column>
+            <Column width="9rem" visible="{monitor>/columns/servicePerformer}"><Text text="Service Performer"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/servicePerformerName}"><Text text="Service Performer Name"/></Column>
+            <Column width="13rem" visible="{monitor>/columns/wbsElement}"><Text text="WBS Element"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/workPackage}"><Text text="Work Package"/></Column>
+            <Column width="16rem" visible="{monitor>/columns/projectManagerEmail}"><Text text="Project Manager Email"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/lastNotified}"><Text text="Last Notified"/></Column>
+            <Column width="8rem" visible="{monitor>/columns/resolved}"><Text text="Resolved"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/completelyDelivered}"><Text text="Completely Delivered"/></Column>
+            <Column width="14rem" visible="{monitor>/columns/notificationStatus}"><Text text="Notification Status"/></Column>
             </columns>
             <items>
             <ColumnListItem>
               <cells>
-                <Text visible="{monitor>/columns/purchaseOrder}" text="{monitor>purchaseOrder}"/>
+                <Text class="poNumberCell" visible="{monitor>/columns/purchaseOrder}" text="{monitor>purchaseOrder}"/>
                 <Text visible="{monitor>/columns/item}" text="{monitor>item}"/>
                 <Text visible="{monitor>/columns/orderQuantity}" text="{monitor>orderQuantity}"/>
                 <Text visible="{monitor>/columns/openQuantity}" text="{monitor>openPurchaseOrderQuantity}"/>
@@ -59,7 +61,10 @@
                 <Text visible="{monitor>/columns/wbsElement}" text="{monitor>wbsElement}"/>
                 <Text visible="{monitor>/columns/workPackage}" text="{monitor>workPackage}"/>
                 <Text visible="{monitor>/columns/projectManagerEmail}" text="{monitor>projectManagerEmail}"/>
-                <Text visible="{monitor>/columns/completelyDelivered}" text="{monitor>isCompletelyDelivered}"/>
+                <Text visible="{monitor>/columns/lastNotified}" text="{monitor>lastNotified}"/>
+                <ObjectStatus visible="{monitor>/columns/resolved}" text="{= ${monitor>resolved} ? 'Resolved' : 'Open' }" state="{= ${monitor>resolved} ? 'Success' : 'None' }"/>
+                <ObjectStatus visible="{monitor>/columns/completelyDelivered}" text="{= ${monitor>isCompletelyDelivered} ? 'Delivered' : 'Open' }" state="{= ${monitor>isCompletelyDelivered} ? 'Success' : 'None' }"/>
+                <ObjectStatus visible="{monitor>/columns/notificationStatus}" text="{monitor>notificationStatus}" state="{= ${monitor>notificationStatus} === 'resolved' ? 'Success' : ${monitor>notificationStatus} === 'eligible' ? 'Information' : ${monitor>notificationStatus} === 'tracking-unavailable' ? 'Error' : 'Warning' }"/>
               </cells>
             </ColumnListItem>
             </items>

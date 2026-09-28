@@ -28,12 +28,6 @@
         "sap.m": {},
         "sap.ui.core": {}
       }
-    },
-    "models": {
-      "i18n": {
-        "type": "sap.ui.model.resource.ResourceModel",
-        "uri": "i18n/i18n.properties"
-      }
     }
   }
 }

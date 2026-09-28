@@ -13,7 +13,6 @@ applications:
       - po-monitor-hana
     env:
       NODE_ENV: production
-      JOB_SCHEDULE_CRON: "0 6 * * 1-5"
-      MAIL_FROM: shipra.sharin@bearingpoint.com
-      DEFAULT_OWNER_EMAIL: ""
+      MAIL_FROM: cap-notifications@bearingpoint.com
+      DEFAULT_OWNER_EMAIL: shipra.sharin@bearingpoint.com
       ENTERPRISE_PROJECT_PATH: /sap/opu/odata/sap/API_ENTERPRISE_PROJECT_SRV/A_EnterpriseProject

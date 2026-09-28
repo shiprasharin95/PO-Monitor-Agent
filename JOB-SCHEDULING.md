@@ -103,10 +103,10 @@ The scheduler uses the same agent orchestration as the CAP action:
 
 ## 4. Cron expression
 
-The Cloud Foundry manifest contains:
+The intended weekday schedule is expressed as:
 
 ```yaml
-JOB_SCHEDULE_CRON: "0 6 * * 1-5"
+0 6 * * 1-5
 ```
 
 This means:
@@ -117,7 +117,7 @@ At minute 0 of hour 6, Monday through Friday
 
 In plain language: **06:00 every weekday**.
 
-Important: this environment variable documents the desired schedule. It does not execute the job by itself. The actual recurring execution is configured in SAP BTP Job Scheduling Service.
+Configure this cron expression on the SAP BTP Job Scheduling Service job that calls `POST /run`. The application does not read a cron environment variable or schedule itself.
 
 Confirm the scheduler timezone. For example, `06:00` in `Asia/Kolkata` is different from `06:00` UTC.
 
@@ -139,7 +139,6 @@ applications:
       - cap-rest-destination
     env:
       NODE_ENV: production
-      JOB_SCHEDULE_CRON: "0 6 * * 1-5"
 ```
 
 Target the correct org and space:

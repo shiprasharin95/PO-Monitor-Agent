@@ -1,18 +1,21 @@
 const { OrchestrationClient } = require('@sap-ai-sdk/orchestration');
 const { fetchOpenPOs, fetchTrackedPOStatus } = require('./po-reader');
-const { autoResolveTrackedItems, findCandidates, recordNotification } = require('./notification-tracking');
+const { attachTrackingState, autoResolveTrackedItems, findCandidates, recordNotification } = require('./notification-tracking');
 const { sendPONotification } = require('./notification-service');
 
 const SYSTEM_PROMPT = `
-You are an SAP Procurement Monitoring Agent using a bounded ReAct-style reasoning process.
-Given tool results, reason about overdue service PO items, notification decisions, owner resolution,
-and edge cases. Return a concise structured run summary with:
-1. total qualifying PO items
-2. total unique POs
-3. notification counts (eligible, sent, failed, suppressed, auto-resolved)
-4. highest gap quantity
-5. required follow-up
-Do not invent values not present in the tool results.
+You are an SAP Procurement Monitoring Agent summarizing overdue open purchase order items.
+Return a concise plain-text business summary in this format:
+Total PO Count: <unique purchase-order count> unique purchase orders.
+Total Item Count: <item count> open PO items.
+Highest Quantity PO: PO <purchase order> has the highest single-item open quantity with <quantity> <unit> open.
+Business Summary: <one short sentence on the main material/service pattern>.
+Notable Concentration: <one short sentence naming no more than three purchase orders or notable exceptions>.
+Use openPurchaseOrderQuantity for the highest quantity, not orderQuantity or gapQuantity. Omit the highest-quantity line if no item has a numeric open quantity.
+Keep the entire summary to at most five lines and 70 words. Do not list every purchase order or repeat the item data.
+Do not include notification delivery, eligibility, suppression, or auto-resolution counts.
+Do not return JSON or a highestGapQuantity field.
+Only report facts supported by the tool results; do not invent values.
 `.trim();
 
 function logAgentEvent(event, details = {}) {
@@ -24,13 +27,48 @@ function logAgentEvent(event, details = {}) {
   console.log(JSON.stringify(payload));
 }
 
-async function fetchAndSummarizeOpenPOs() {
+async function fetchAndSummarizeOpenPOs({ processNotifications = false } = {}) {
   logAgentEvent('open-po-agent-start');
-  const autoResolved = await autoResolveTrackedItems(fetchTrackedPOStatus);
-  const pos = await fetchOpenPOs();
+  let autoResolved = 0;
+  let trackingFailure = null;
+  if (processNotifications) {
+    try {
+      autoResolved = await autoResolveTrackedItems(fetchTrackedPOStatus);
+    } catch (error) {
+      trackingFailure = error;
+      logAgentEvent('hana-tracking-unavailable', { stage: 'auto-resolution', error: error.message });
+    }
+  }
+
+  let pos = await fetchOpenPOs();
+  if (!processNotifications) pos = await attachTrackingState(pos);
   logAgentEvent('open-po-fetch-complete', { count: pos.length });
 
-  const tracking = await findCandidates(pos);
+  let tracking;
+  if (processNotifications && !trackingFailure) {
+    try {
+      tracking = await findCandidates(pos);
+    } catch (error) {
+      trackingFailure = error;
+      logAgentEvent('hana-tracking-unavailable', { stage: 'eligibility-check', error: error.message });
+    }
+  }
+
+  if (!tracking) {
+    tracking = !processNotifications
+      ? {
+      enabled: pos.every(po => po.notificationStatus !== 'tracking-unavailable'),
+      eligible: pos.filter(po => po.notificationEligible === true),
+      skipped: pos.filter(po => po.notificationEligible === false),
+      reason: 'Read-only UI request; notification workflow not run.'
+      }
+      : {
+        enabled: false,
+        eligible: [],
+        skipped: pos,
+        reason: `HANA tracking unavailable; notifications withheld to avoid duplicate mail. ${trackingFailure?.message || ''}`.trim()
+      };
+  }
   logAgentEvent('po-notification-tracking-complete', {
     enabled: tracking.enabled,
     eligible: tracking.eligible.length,
@@ -39,32 +77,33 @@ async function fetchAndSummarizeOpenPOs() {
 
   const sent = [];
   const failed = [];
-  for (const po of tracking.eligible) {
-    try {
-      const delivery = await sendPONotification(po);
-      await recordNotification(po.purchaseOrder, po.item);
-      sent.push({ purchaseOrder: po.purchaseOrder, item: po.item, recipient: delivery.recipient });
-    } catch (error) {
-      failed.push({
-        purchaseOrder: po.purchaseOrder,
-        item: po.item,
-        recipient: po.ownerEmail || process.env.DEFAULT_OWNER_EMAIL || '',
-        error: error.message
-      });
-      logAgentEvent('po-notification-failed', {
-        purchaseOrder: po.purchaseOrder,
-        item: po.item,
-        error: error.message
-      });
+  if (processNotifications) {
+    for (const po of tracking.eligible) {
+      try {
+        const delivery = await sendPONotification(po);
+        await recordNotification(po.purchaseOrder, po.item, delivery.recipient);
+        sent.push({ purchaseOrder: po.purchaseOrder, item: po.item, recipient: delivery.recipient });
+      } catch (error) {
+        failed.push({
+          purchaseOrder: po.purchaseOrder,
+          item: po.item,
+          recipient: po.projectManagerEmail || process.env.DEFAULT_OWNER_EMAIL || 'shipra.sharin@bearingpoint.com',
+          error: error.message
+        });
+        logAgentEvent('po-notification-failed', {
+          purchaseOrder: po.purchaseOrder,
+          item: po.item,
+          error: error.message
+        });
+      }
     }
   }
 
   const summary = await summarizePOs(pos, {
-    eligible: tracking.eligible.length,
-    suppressed: tracking.skipped.length,
-    sent: sent.length,
-    failed: failed.length,
-    autoResolved
+    overdueItemsScanned: pos.length,
+    uniquePurchaseOrdersScanned: new Set(pos.map(po => po.purchaseOrder)).size,
+    positiveGapItems: pos.filter(po => Number(po.gapQuantity) > 0).length,
+    positiveGapPurchaseOrders: new Set(pos.filter(po => Number(po.gapQuantity) > 0).map(po => po.purchaseOrder)).size
   });
   logAgentEvent('open-po-summary-complete', { summaryLength: summary.length, count: pos.length });
 
@@ -80,7 +119,8 @@ async function fetchAndSummarizeOpenPOs() {
       failed: failed.length,
       autoResolved,
       failures: failed,
-      notificationSender: process.env.MAIL_FROM || 'shipra.sharin@bearingpoint.com',
+      reason: tracking.reason || null,
+      notificationSender: process.env.MAIL_FROM || 'cap-notifications@bearingpoint.com',
       trackingStore: tracking.enabled ? 'hana-cloud' : 'dry-run'
     }
   };
@@ -100,7 +140,7 @@ async function summarizePOs(pos, runContext = {}) {
           prompt: {
             template: [
               { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: 'Tool results: {{?poData}}\nRun context: {{?runContext}}\nReturn your Thought, Action, Observation, and provisional Final.' }
+              { role: 'user', content: 'Tool results: {{?poData}}\nRun context: {{?runContext}}\nDraft the requested plain-text business summary.' }
             ]
           }
         }
@@ -124,7 +164,7 @@ async function summarizePOs(pos, runContext = {}) {
           prompt: {
             template: [
               { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: 'Tool results: {{?poData}}\nRun context: {{?runContext}}\nPrior ReAct reasoning: {{?reasoning}}\nNow return only the final structured run summary.' }
+              { role: 'user', content: 'Tool results: {{?poData}}\nRun context: {{?runContext}}\nPrior analysis: {{?reasoning}}\nReturn only the final plain-text business summary in the requested format.' }
             ]
           }
         }
@@ -151,12 +191,13 @@ async function summarizePOs(pos, runContext = {}) {
 function buildFallbackSummary(pos) {
   const totalQty = pos.reduce((sum, p) => sum + (parseFloat(p.orderQuantity) || 0), 0);
   const uniquePos = new Set(pos.map(p => p.purchaseOrder)).size;
+  const positiveGapItems = pos.filter(p => Number(p.gapQuantity) > 0).length;
   const highest = pos.reduce(
     (max, p) => ((parseFloat(p.orderQuantity) || 0) > (parseFloat(max.orderQuantity) || 0) ? p : max),
     pos[0]
   );
 
-  return `Reviewed ${uniquePos} purchase orders across ${pos.length} open items. Total order quantity is ${totalQty}. Highest quantity is PO ${highest.purchaseOrder}/${highest.item} with ${highest.orderQuantity} ${highest.orderUnit}. This summary is generated from the fallback logic because the AI orchestration call was unavailable.`;
+  return `Reviewed ${pos.length} overdue PO items across ${uniquePos} purchase orders; ${positiveGapItems} items have a positive gap. Total order quantity is ${totalQty}. Highest quantity is PO ${highest.purchaseOrder}/${highest.item} with ${highest.orderQuantity} ${highest.orderUnit}. This summary is generated from the fallback logic because the AI orchestration call was unavailable.`;
 }
 
 module.exports = { summarizePOs, fetchAndSummarizeOpenPOs };

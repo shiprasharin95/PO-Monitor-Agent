@@ -1,0 +1,73 @@
+html,
+body {
+  background: #f4f6f7;
+}
+
+.poMonitorPage .sapMPageEnableScrolling {
+  background: #f4f6f7;
+}
+
+.poMonitorShell {
+  gap: 0.25rem;
+}
+
+.poActionToolbar,
+.poTableToolbar {
+  border: 1px solid var(--sapGroup_ContentBorderColor);
+  border-radius: 0.25rem;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.poSummary {
+  display: block;
+  padding: 0.75rem 1rem;
+  border-left: 0.25rem solid var(--sapInformativeColor);
+  background: var(--sapInformationBackground);
+  color: var(--sapTextColor);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.poMonitorTable {
+  min-width: 150rem;
+  border: 1px solid var(--sapGroup_ContentBorderColor);
+  border-radius: 0.25rem;
+  overflow: hidden;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.poMonitorTable .sapMListTblHeaderCell {
+  background: var(--sapList_HeaderBackground);
+  border-bottom: 1px solid var(--sapList_HeaderBorderColor);
+}
+
+.poMonitorTable .sapMListTblHeaderCell .sapMText {
+  font-weight: 700;
+}
+
+.poMonitorTable .sapMListTblCell {
+  vertical-align: middle;
+}
+
+.poMonitorTable .sapMListTblRow:hover > .sapMListTblCell {
+  background: var(--sapList_Hover_Background);
+}
+
+.poNumberCell {
+  font-weight: 700;
+  color: var(--sapLinkColor);
+}
+
+@media (max-width: 720px) {
+  .poMonitorShell {
+    margin: 0.5rem !important;
+  }
+
+  .poActionToolbar .sapMSF {
+    width: 100% !important;
+  }
+
+  .poSummary {
+    font-size: 0.875rem;
+  }
+}

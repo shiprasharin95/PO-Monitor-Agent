@@ -19,12 +19,11 @@ function buildNotificationBody(po) {
 }
 
 async function sendPONotification(po) {
-  const recipient = po.ownerEmail || process.env.DEFAULT_OWNER_EMAIL;
-  if (!recipient) {
-    throw new Error(`No owner email resolved for PO ${po.purchaseOrder}/${po.item} and DEFAULT_OWNER_EMAIL is not configured.`);
-  }
+  const recipient = po.projectManagerEmail
+    || process.env.DEFAULT_OWNER_EMAIL
+    || 'shipra.sharin@bearingpoint.com';
 
-  const senderMailbox = cds.env.requires.GraphMail.senderMailbox || process.env.MAIL_FROM;
+  const senderMailbox = cds.env.requires.GraphMail.senderMailbox || process.env.MAIL_FROM || 'cap-notifications@bearingpoint.com';
   if (!senderMailbox) {
     throw new Error('GraphMail sender mailbox is not configured.');
   }

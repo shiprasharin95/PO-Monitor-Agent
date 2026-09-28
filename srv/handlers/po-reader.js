@@ -3,6 +3,8 @@ const { executeHttpRequest } = require('@sap-cloud-sdk/http-client');
 const SERVICE_PATH = '/sap/opu/odata4/sap/api_purchaseorder_2/srvd_a2x/sap/purchaseorder/0001';
 const ENTERPRISE_PROJECT_PATH = process.env.ENTERPRISE_PROJECT_PATH || '/sap/opu/odata/sap/API_ENTERPRISE_PROJECT_SRV/A_EnterpriseProject';
 const BUSINESS_PARTNER_PATH = '/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_BusinessPartner';
+const PROJECT_SERVICE_PATH = '/sap/opu/odata/CPD/SC_EXTERNAL_SERVICES_SRV';
+const PROJECT_CONTACT_PATH = '/sap/opu/odata/sap/YY1_PROJECTMANAGERCONTACT_CDS/YY1_ProjectManagerContact';
 const SCHEDULE_LINE_FIELDS = [
   'PurchaseOrder',
   'PurchaseOrderItem',
@@ -16,8 +18,8 @@ const ACCOUNT_ASSIGNMENT_FIELDS = [
   'WBSElementExternalID',
   'WBSElementInternalID'
 ];
-const businessPartnerCache = new Map();
 const ownerCache = new Map();
+const projectManagerCache = new Map();
 
 function destinationRequest(basePath) {
   return url => executeHttpRequest(
@@ -75,6 +77,48 @@ async function resolveWbsOwner(wbsElement, wbsInternalId, request) {
   }
 }
 
+async function resolveProjectManagerEmail(wbsElements) {
+  const projectNames = [...new Set(wbsElements.map(wbs => wbs.split('.')[0]).filter(Boolean))];
+  const request = destinationRequest('');
+  const managers = [];
+
+  for (const projectName of projectNames) {
+    if (projectManagerCache.has(projectName)) {
+      managers.push(projectManagerCache.get(projectName));
+      continue;
+    }
+
+    try {
+      const projectUrl = `${PROJECT_SERVICE_PATH}/ProjectSet('${encodeURIComponent(projectName)}')?$select=ProjManagerId,ProjManagerName&$format=json`;
+      const projectResponse = await request(projectUrl);
+      const project = projectResponse.data?.d || projectResponse.data || {};
+      if (!project.ProjManagerId) throw new Error('Project manager ID not returned');
+
+      const filter = encodeURIComponent(`WorkAssignment eq '${escapeOData(project.ProjManagerId)}'`);
+      const contactUrl = `${PROJECT_CONTACT_PATH}?$filter=${filter}&$select=WorkAssignment,PersonFullName,DefaultEmailAddress&$format=json`;
+      const contactResponse = await request(contactUrl);
+      const contacts = responseRows(contactResponse);
+      const contact = contacts.find(entry => entry.DefaultEmailAddress) || contacts[0] || {};
+      const manager = {
+        projectName,
+        projectManagerId: project.ProjManagerId,
+        projectManagerName: project.ProjManagerName || contact.PersonFullName || '',
+        projectManagerEmail: contact.DefaultEmailAddress || ''
+      };
+      projectManagerCache.set(projectName, manager);
+      managers.push(manager);
+    } catch (error) {
+      console.warn('[PO] Project manager email lookup failed.', {
+        projectName,
+        status: error.response?.status,
+        message: error.message
+      });
+    }
+  }
+
+  return managers;
+}
+
 async function fetchOpenPOs() {
   const baseRequest = destinationRequest(SERVICE_PATH);
   const itemFilter = encodeURIComponent(
@@ -127,6 +171,7 @@ async function fetchOpenPOs() {
     const wbsElements = [...new Set(assignments.map(a => a.WBSElementExternalID).filter(Boolean))];
     const wbsInternalIds = [...new Set(assignments.map(a => a.WBSElementInternalID).filter(Boolean))];
     const owner = await resolveWbsOwner(wbsElements[0], wbsInternalIds[0], baseRequest);
+    const projectManagers = await resolveProjectManagerEmail(wbsElements);
     const latestOverdue = overdueSchedules
       .map(line => line.ScheduleLineDeliveryDate)
       .sort()
@@ -149,6 +194,8 @@ async function fetchOpenPOs() {
       ownerEmail: owner.ownerEmail,
       ownerName: owner.ownerName || '',
       ownerSource: owner.ownerSource,
+      projectManagerEmail: [...new Set(projectManagers.map(manager => manager.projectManagerEmail).filter(Boolean))].join(', '),
+      projectManagerName: [...new Set(projectManagers.map(manager => manager.projectManagerName).filter(Boolean))].join(', '),
       isCompletelyDelivered: row.IsCompletelyDelivered,
       deletionCode: row.PurchasingDocumentDeletionCode
     });
@@ -180,4 +227,4 @@ async function fetchTrackedPOStatus(purchaseOrder, item) {
   };
 }
 
-module.exports = { fetchOpenPOs, fetchTrackedPOStatus, resolveWbsOwner };
+module.exports = { fetchOpenPOs, fetchTrackedPOStatus, resolveProjectManagerEmail, resolveWbsOwner };

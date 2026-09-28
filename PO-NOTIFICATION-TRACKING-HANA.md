@@ -153,9 +153,9 @@ Destination service; credentials are not stored in this repository.
 Manual tasks still required:
 
 1. Register an Azure AD application with Microsoft Graph `Mail.Send` application permission and admin consent.
-2. Create an Exchange shared/dedicated sender mailbox and confirm `shipra.sharin@bearingpoint.com` is allowed to send from it.
+2. Create an Exchange shared/dedicated sender mailbox and confirm `cap-notifications@bearingpoint.com` is allowed to send from it.
 3. Create an Exchange Application Access Policy restricting the app to that mailbox.
-4. Create a BTP destination named `Graph-Mail-Destination`:
+4. The app uses the existing BTP destination named `AzureMailService`:
 
   ```text
   URL: https://graph.microsoft.com/v1.0
@@ -166,17 +166,18 @@ Manual tasks still required:
   ```
 
 5. Ensure the existing `cap-rest-destination` service binding can resolve this destination.
-6. Set `DEFAULT_OWNER_EMAIL` in the Cloud Foundry environment to an approved fallback recipient.
+6. Recipient selection uses `projectManagerEmail` first, falling back to `shipra.sharin@bearingpoint.com`.
 7. Verify the enterprise-project entity path in `ENTERPRISE_PROJECT_PATH`; the current default is `A_EnterpriseProject`.
 8. Never put Graph client secrets or OAuth credentials in this repository.
 
 The sender identity is configured as:
 
 ```text
-MAIL_FROM=shipra.sharin@bearingpoint.com
+MAIL_FROM=cap-notifications@bearingpoint.com
 ```
 
-This identifies the sender but does not provide mail delivery by itself.
+This identifies the sender but does not provide mail delivery by itself. The
+Graph destination must be configured and authorized to send from this mailbox.
 
 ## Daily notification run implemented
 
@@ -186,7 +187,7 @@ This identifies the sender but does not provide mail delivery by itself.
 2. Query service PO items with the existing service/not-deleted/not-completely-delivered rules.
 3. Read schedule lines and retain only items with `ScheduleLineDeliveryDate < today`.
 4. Compute `gapQuantity = OrderQuantity - OpenPurchaseOrderQuantity`.
-5. Resolve the WBS owner through `ENTERPRISE_PROJECT_PATH` and Business Partner email, with `DEFAULT_OWNER_EMAIL` fallback.
+5. Resolve the project manager email from WBS/project data; use `shipra.sharin@bearingpoint.com` if no PM email is returned.
 6. Apply HANA tracking suppression and five-working-day re-notification.
 7. Send structured Graph email for each eligible item.
 8. Record `LAST_NOTIFIED` only after a successful Graph response.
@@ -202,10 +203,10 @@ The deployed test run verified:
 - HANA tracking was enabled.
 - 21 items were eligible and none were suppressed.
 - No tracking rows were created because email delivery was not successful.
-- Owner resolution fell back to `DEFAULT_OWNER_EMAIL`, which is intentionally empty until an approved fallback recipient is provided.
+- Owner resolution previously fell back to an empty `DEFAULT_OWNER_EMAIL`; the configured fallback is now `shipra.sharin@bearingpoint.com`.
 
 The next live run should show `notified > 0` only after both the WBS owner API path and
-`Graph-Mail-Destination` are configured successfully.
+`AzureMailService` are configured and visible to the app's bound Destination service.
 
 ## Optional auto-resolution
 

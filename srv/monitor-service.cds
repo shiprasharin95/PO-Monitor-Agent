@@ -22,6 +22,10 @@ service MonitorService {
     ownerEmail            : String;
     ownerName             : String;
     ownerSource           : String;
+    lastNotified          : Timestamp;
+    resolved              : Boolean;
+    notificationEligible  : Boolean;
+    notificationStatus    : String;
     isCompletelyDelivered : Boolean;
     deletionCode          : String;
   }
