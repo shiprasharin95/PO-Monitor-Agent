@@ -15,7 +15,12 @@ service MonitorService {
     servicePerformerName  : String;
     wbsElement            : String;
     workPackage           : String;
+    projectId             : String;
     projectName           : String;
+    workPackageId         : String;
+    workPackageName       : String;
+    costCenter            : String;
+    costCenterResponsible : String;
     projectManagerId      : String;
     projectManagerName    : String;
     projectManagerEmail   : String;

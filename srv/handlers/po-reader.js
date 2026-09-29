@@ -16,10 +16,17 @@ const ACCOUNT_ASSIGNMENT_FIELDS = [
   'PurchaseOrder',
   'PurchaseOrderItem',
   'WBSElementExternalID',
-  'WBSElementInternalID'
+  'WBSElementInternalID',
+  'CostCenter'
 ];
+const BASIC_ACCOUNT_ASSIGNMENT_FIELDS = ACCOUNT_ASSIGNMENT_FIELDS.filter(field => field !== 'CostCenter');
 const ownerCache = new Map();
 const projectManagerCache = new Map();
+
+function isUnsupportedCostCenterProjection(error) {
+  const message = String(error.response?.data?.error?.message || error.message || '');
+  return error.response?.status === 400 && /CostCenter|property/i.test(message);
+}
 
 function destinationRequest(basePath) {
   return url => executeHttpRequest(
@@ -154,6 +161,17 @@ async function fetchOpenPOs() {
     const [scheduleResponse, accountResponse] = await Promise.all([
       baseRequest(`/PurchaseOrderScheduleLine?$filter=${itemFilter}&$select=${related(SCHEDULE_LINE_FIELDS)}`),
       baseRequest(`/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(ACCOUNT_ASSIGNMENT_FIELDS)}`)
+        .catch(async error => {
+          if (!isUnsupportedCostCenterProjection(error)) throw error;
+
+          console.warn('[PO] Cost Center projection unavailable; retrying base account assignments.', {
+            purchaseOrder,
+            item,
+            status: error.response?.status,
+            message: error.message
+          });
+          return baseRequest(`/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(BASIC_ACCOUNT_ASSIGNMENT_FIELDS)}`);
+        })
     ]);
     const schedules = responseRows(scheduleResponse);
     const assignments = responseRows(accountResponse);
@@ -191,6 +209,12 @@ async function fetchOpenPOs() {
       performancePeriodEndDate: overdueSchedules.map(line => line.PerformancePeriodEndDate).filter(Boolean).sort().at(-1) || null,
       wbsElement: wbsElements.join(', '),
       wbsElementInternalId: wbsInternalIds.join(', '),
+      projectId: '',
+      projectName: '',
+      workPackageId: wbsElements.join(', '),
+      workPackageName: '',
+      costCenter: [...new Set(assignments.map(assignment => assignment.CostCenter).filter(Boolean))].join(', '),
+      costCenterResponsible: '',
       ownerEmail: owner.ownerEmail,
       ownerName: owner.ownerName || '',
       ownerSource: owner.ownerSource,

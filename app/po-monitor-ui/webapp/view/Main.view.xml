@@ -29,17 +29,22 @@
             <columns>
             <Column width="9rem" visible="{monitor>/columns/purchaseOrder}"><Text text="Purchase Order"/></Column>
             <Column width="5rem" visible="{monitor>/columns/item}"><Text text="Item"/></Column>
-            <Column width="7rem" hAlign="End" visible="{monitor>/columns/orderQuantity}"><Text text="Order Qty"/></Column>
-            <Column width="7rem" hAlign="End" visible="{monitor>/columns/openQuantity}"><Text text="Open Qty"/></Column>
-            <Column width="5rem" visible="{monitor>/columns/unit}"><Text text="Unit"/></Column>
             <Column width="9rem" visible="{monitor>/columns/material}"><Text text="Material Number"/></Column>
             <Column width="16rem" visible="{monitor>/columns/materialDescription}"><Text text="Material Description"/></Column>
-            <Column width="12rem" visible="{monitor>/columns/performancePeriod}"><Text text="End of Performance Period"/></Column>
+            <Column width="7rem" hAlign="End" visible="{monitor>/columns/orderQuantity}"><Text text="Order QTY"/></Column>
+            <Column width="7rem" hAlign="End" visible="{monitor>/columns/openQuantity}"><Text text="Open QTY"/></Column>
+            <Column width="5rem" visible="{monitor>/columns/unit}"><Text text="Unit"/></Column>
             <Column width="9rem" visible="{monitor>/columns/servicePerformer}"><Text text="Service Performer"/></Column>
             <Column width="12rem" visible="{monitor>/columns/servicePerformerName}"><Text text="Service Performer Name"/></Column>
-            <Column width="13rem" visible="{monitor>/columns/wbsElement}"><Text text="WBS Element"/></Column>
-            <Column width="12rem" visible="{monitor>/columns/workPackage}"><Text text="Work Package"/></Column>
-            <Column width="16rem" visible="{monitor>/columns/projectManagerEmail}"><Text text="Project Manager Email"/></Column>
+            <Column width="12rem" visible="{monitor>/columns/performancePeriod}"><Text text="End Of Performance Period"/></Column>
+            <Column width="10rem" visible="{monitor>/columns/projectId}"><Text text="Project ID"/></Column>
+            <Column width="16rem" visible="{monitor>/columns/projectName}"><Text text="Project Name"/></Column>
+            <Column width="15rem" visible="{monitor>/columns/workPackageId}"><Text text="WBS /Work Package ID"/></Column>
+            <Column width="16rem" visible="{monitor>/columns/workPackageName}"><Text text="WBS/Work Package Name"/></Column>
+            <Column width="11rem" visible="{monitor>/columns/costCenter}"><Text text="Cost Center"/></Column>
+            <Column width="16rem" visible="{monitor>/columns/costCenterResponsible}"><Text text="Cost Center Responsible"/></Column>
+            <Column width="14rem" visible="{monitor>/columns/projectManagerName}"><Text text="Project Manager Name"/></Column>
+            <Column width="18rem" visible="{monitor>/columns/projectManagerEmail}"><Text text="Project Manager email"/></Column>
             <Column width="12rem" visible="{monitor>/columns/lastNotified}"><Text text="Last Notified"/></Column>
             <Column width="8rem" visible="{monitor>/columns/resolved}"><Text text="Resolved"/></Column>
             <Column width="12rem" visible="{monitor>/columns/completelyDelivered}"><Text text="Completely Delivered"/></Column>
@@ -50,16 +55,21 @@
               <cells>
                 <Text class="poNumberCell" visible="{monitor>/columns/purchaseOrder}" text="{monitor>purchaseOrder}"/>
                 <Text visible="{monitor>/columns/item}" text="{monitor>item}"/>
+                <Text visible="{monitor>/columns/material}" text="{monitor>material}"/>
+                <Text visible="{monitor>/columns/materialDescription}" text="{monitor>materialDescription}"/>
                 <Text visible="{monitor>/columns/orderQuantity}" text="{monitor>orderQuantity}"/>
                 <Text visible="{monitor>/columns/openQuantity}" text="{monitor>openPurchaseOrderQuantity}"/>
                 <Text visible="{monitor>/columns/unit}" text="{monitor>orderUnit}"/>
-                <Text visible="{monitor>/columns/material}" text="{monitor>material}"/>
-                <Text visible="{monitor>/columns/materialDescription}" text="{monitor>materialDescription}"/>
-                <Text visible="{monitor>/columns/performancePeriod}" text="{monitor>performancePeriodEndDate}"/>
                 <Text visible="{monitor>/columns/servicePerformer}" text="{monitor>servicePerformer}"/>
                 <Text visible="{monitor>/columns/servicePerformerName}" text="{monitor>servicePerformerName}"/>
-                <Text visible="{monitor>/columns/wbsElement}" text="{monitor>wbsElement}"/>
-                <Text visible="{monitor>/columns/workPackage}" text="{monitor>workPackage}"/>
+                <Text visible="{monitor>/columns/performancePeriod}" text="{monitor>performancePeriodEndDate}"/>
+                <Text visible="{monitor>/columns/projectId}" text="{monitor>projectId}"/>
+                <Text visible="{monitor>/columns/projectName}" text="{monitor>projectName}"/>
+                <Text visible="{monitor>/columns/workPackageId}" text="{monitor>workPackageId}"/>
+                <Text visible="{monitor>/columns/workPackageName}" text="{monitor>workPackageName}"/>
+                <Text visible="{monitor>/columns/costCenter}" text="{monitor>costCenter}"/>
+                <Text visible="{monitor>/columns/costCenterResponsible}" text="{monitor>costCenterResponsible}"/>
+                <Text visible="{monitor>/columns/projectManagerName}" text="{monitor>projectManagerName}"/>
                 <Text visible="{monitor>/columns/projectManagerEmail}" text="{monitor>projectManagerEmail}"/>
                 <Text visible="{monitor>/columns/lastNotified}" text="{monitor>lastNotified}"/>
                 <ObjectStatus visible="{monitor>/columns/resolved}" text="{= ${monitor>resolved} ? 'Resolved' : 'Open' }" state="{= ${monitor>resolved} ? 'Success' : 'None' }"/>
