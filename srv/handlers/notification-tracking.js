@@ -22,6 +22,10 @@ function hasHanaBinding() {
   }
 }
 
+function isHanaTrackingAvailable() {
+  return Boolean(cds.db && hasHanaBinding());
+}
+
 function isWeekend(date) {
   const day = date.getUTCDay();
   return day === 0 || day === 6;
@@ -45,6 +49,21 @@ function isEligibleForNotification(log, now = new Date()) {
   if (!log.lastNotified) return true;
 
   return now >= addWorkingDays(new Date(log.lastNotified), 5);
+}
+
+async function checkTrackingLog(purchaseOrder, item, now = new Date()) {
+  if (!cds.db || !hasHanaBinding()) {
+    return { status: 'tracking-unavailable', eligible: false, resolved: false, lastNotified: null };
+  }
+
+  const log = await getLog(cds.db, purchaseOrder, item);
+  const eligible = isEligibleForNotification(log, now);
+  return {
+    status: log?.resolved ? 'resolved' : eligible ? 'eligible' : 'suppressed',
+    eligible,
+    resolved: Boolean(log?.resolved),
+    lastNotified: log?.lastNotified || null
+  };
 }
 
 async function getLog(tx, purchaseOrder, item) {
@@ -184,8 +203,10 @@ module.exports = {
   addWorkingDays,
   attachTrackingState,
   autoResolveTrackedItems,
+  checkTrackingLog,
   findCandidates,
   isEligibleForNotification,
+  isHanaTrackingAvailable,
   markResolved,
   recordNotification
 };

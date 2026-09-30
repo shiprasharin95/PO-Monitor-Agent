@@ -18,6 +18,7 @@ sap.ui.define([
         visibleCount: 0,
         busy: false,
         search: '',
+        quantityFilter: 'all',
         columns: {
           purchaseOrder: true,
           item: true,
@@ -69,6 +70,7 @@ sap.ui.define([
             visibleCount: (data.pos || []).length,
             busy: false,
             search: '',
+            quantityFilter: 'all',
             columns: oModel.getProperty('/columns')
           });
           MessageToast.show(`Retrieved ${data.count || 0} open PO(s)`);
@@ -84,11 +86,23 @@ sap.ui.define([
       this._applyFilters();
     },
 
+    onQuantityFilterChange: function (oEvent) {
+      this.getView().getModel('monitor').setProperty('/quantityFilter', oEvent.getSource().getSelectedKey());
+      this._applyFilters();
+    },
+
     _applyFilters: function () {
       const oModel = this.getView().getModel('monitor');
       const search = (oModel.getProperty('/search') || '').toLowerCase().trim();
+      const quantityFilter = oModel.getProperty('/quantityFilter') || 'all';
       const allPos = oModel.getProperty('/allPos') || [];
       const filtered = allPos.filter(po => {
+        const orderQuantity = Number(po.orderQuantity);
+        const openQuantity = Number(po.openPurchaseOrderQuantity);
+        const quantityMatches = quantityFilter === 'all'
+          || (quantityFilter === 'fully-open' && openQuantity === orderQuantity)
+          || (quantityFilter === 'partially-open' && openQuantity > 0 && openQuantity < orderQuantity)
+          || (quantityFilter === 'zero-open' && openQuantity === 0);
         const searchable = [
           po.purchaseOrder,
           po.item,
@@ -106,7 +120,7 @@ sap.ui.define([
           po.projectManagerName,
           po.projectManagerEmail
         ].join(' ').toLowerCase();
-        return !search || searchable.includes(search);
+        return quantityMatches && (!search || searchable.includes(search));
       });
 
       oModel.setProperty('/pos', filtered);

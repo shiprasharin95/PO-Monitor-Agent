@@ -166,7 +166,7 @@ Manual tasks still required:
   ```
 
 5. Ensure the existing `cap-rest-destination` service binding can resolve this destination.
-6. Recipient selection uses `projectManagerEmail` first, falling back to `shipra.sharin@bearingpoint.com`.
+6. Recipients are the resolved WBS owner (`ownerEmail`), falling back to `DEFAULT_OWNER_EMAIL`.
 7. Verify the enterprise-project entity path in `ENTERPRISE_PROJECT_PATH`; the current default is `A_EnterpriseProject`.
 8. Never put Graph client secrets or OAuth credentials in this repository.
 
@@ -184,18 +184,19 @@ Graph destination must be configured and authorized to send from this mailbox.
 `POST /run` now performs the following sequence:
 
 1. Auto-resolve tracked items whose current S/4HANA status is delivered or has zero open quantity.
-2. Query service PO items with the existing service/not-deleted/not-completely-delivered rules.
-3. Read schedule lines and retain only items with `ScheduleLineDeliveryDate < today`.
-4. Compute `gapQuantity = OrderQuantity - OpenPurchaseOrderQuantity`.
-5. Resolve the project manager email from WBS/project data; use `shipra.sharin@bearingpoint.com` if no PM email is returned.
-6. Apply HANA tracking suppression and five-working-day re-notification.
-7. Send structured Graph email for each eligible item.
-8. Record `LAST_NOTIFIED` only after a successful Graph response.
-9. Pass tool results and notification counts to the AI orchestration prompt for a bounded ReAct-style run summary.
+2. Use the ReAct loop with SAP AI Core Orchestration (`gpt-4o-mini` by default; override with `AI_AGENT_MODEL`) to select the next permitted tool.
+3. Fetch service PO items that are not deleted or completely delivered and have an overdue schedule line; retain the earlier behavior without filtering on open quantity versus order quantity, including items where both quantities are equal. Follow OData continuation links.
+4. Resolve the WBS responsible owner through Enterprise Project and Business Partner OData; use `DEFAULT_OWNER_EMAIL` if resolution fails.
+5. Check HANA tracking for each item; skip resolved items, suppress reminders before five weekdays have elapsed, and permit a first notification or reminder when eligible.
+6. Send GraphMail to the WBS owner; reminder emails are labeled as reminders.
+7. Record `LAST_NOTIFIED` only after a successful Graph response.
+8. Return counts for found items, eligible, sent, failed, suppressed, resolved, and automatically resolved items. Tool actions and fallback owner sources are logged without model chain-of-thought.
 
-The response includes `eligible`, `notified`, `failed`, `skipped`, and `autoResolved` counts. Failed email delivery is reported per PO item and does not create a tracking record.
+Failed email delivery is reported per PO item and does not create a tracking record. HANA tracking and GraphMail are retained as the existing BTP integrations; PostgreSQL and SMTP/Nodemailer from the reference architecture are not used by this project.
 
-### Live verification status
+### Historical live verification
+
+The following results are from a previous deployment, before the current ReAct workflow changes. They are not verification of the current source revision.
 
 The deployed test run verified:
 
@@ -208,16 +209,11 @@ The deployed test run verified:
 The next live run should show `notified > 0` only after both the WBS owner API path and
 `AzureMailService` are configured and visible to the app's bound Destination service.
 
-## Optional auto-resolution
+## Auto-resolution
 
-Auto-resolution is not yet wired because the current open-PO query does not select `OpenPurchaseOrderQuantity`.
+The scheduled run checks unresolved HANA records against S/4HANA before fetching candidates. It marks a record resolved when the item is completely delivered or its summed schedule-line open quantity is zero. An item absent from the open-only candidate query is not by itself treated as resolved.
 
-To implement it:
-
-1. Verify that `OpenPurchaseOrderQuantity` exists in the S/4HANA API metadata.
-2. Re-query tracked unresolved PO items.
-3. Set `resolved = true` and `resolvedDate = today` when `IsCompletelyDelivered = true` or `OpenPurchaseOrderQuantity = 0`.
-4. Do not treat absence from an open-only query as proof of resolution.
+The normal PO read and the status re-query both select `OpenPurchaseOrderQuantity`; verify that the field remains available in the target S/4HANA API metadata.
 
 ## Testing
 

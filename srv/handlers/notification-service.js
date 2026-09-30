@@ -4,9 +4,9 @@ function getGraphMail() {
   return cds.connect.to('GraphMail');
 }
 
-function buildNotificationBody(po) {
+function buildNotificationBody(po, { isReminder = false } = {}) {
   return [
-    'Open purchase order follow-up required',
+    isReminder ? 'Reminder: open purchase order follow-up required' : 'Open purchase order follow-up required',
     '',
     `Purchase Order: ${po.purchaseOrder}`,
     `Item: ${po.item}`,
@@ -18,10 +18,11 @@ function buildNotificationBody(po) {
   ].join('\n');
 }
 
-async function sendPONotification(po) {
-  const recipient = po.projectManagerEmail
-    || process.env.DEFAULT_OWNER_EMAIL
-    || 'shipra.sharin@bearingpoint.com';
+async function sendPONotification(po, { isReminder = false } = {}) {
+  const recipient = po.ownerEmail || process.env.DEFAULT_OWNER_EMAIL;
+  if (!recipient) {
+    throw new Error('No WBS owner email or DEFAULT_OWNER_EMAIL is configured.');
+  }
 
   const senderMailbox = cds.env.requires.GraphMail.senderMailbox || process.env.MAIL_FROM || 'cap-notifications@bearingpoint.com';
   if (!senderMailbox) {
@@ -34,8 +35,8 @@ async function sendPONotification(po) {
     path: `/users/${encodeURIComponent(senderMailbox)}/sendMail`,
     data: {
       message: {
-        subject: `Overdue purchase order ${po.purchaseOrder}/${po.item} requires action`,
-        body: { contentType: 'Text', content: buildNotificationBody(po) },
+        subject: `${isReminder ? 'Reminder: ' : ''}Overdue purchase order ${po.purchaseOrder}/${po.item} requires action`,
+        body: { contentType: 'Text', content: buildNotificationBody(po, { isReminder }) },
         toRecipients: [{ emailAddress: { address: recipient } }]
       },
       saveToSentItems: true

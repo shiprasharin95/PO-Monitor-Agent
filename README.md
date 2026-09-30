@@ -4,11 +4,13 @@ PO UnBooked Quantity Monitor Agent
 
 ## Overview
 
-A minimal CAP application: user presses **GO**, the backend calls S/4HANA Cloud
-(via the `S4HC_JournalEntry` BTP destination) to retrieve **open Purchase Order
-items**, then sends that data to **SAP AI Core Orchestration (GENERATIVE_AI_HUB
-destination, model `gpt-5.4`)** to produce a short business summary. Both the
-PO table and the AI summary are displayed in the UI5 app.
+A CAP application that reads service purchase-order items from S/4HANA Cloud
+through the `S4HC_JournalEntry` destination. The UI's **GO** action is
+read-only; scheduled `POST /run` executes the AI-guided tool workflow, resolves
+WBS owners, checks HANA notification tracking, and sends eligible notifications
+through the configured Microsoft Graph destination. SAP AI Core Orchestration
+uses `gpt-4o-mini` by default; set `AI_AGENT_MODEL` to select another available
+model. The UI displays the PO table and AI summary.
 
 ## PO fields displayed
 
@@ -48,8 +50,11 @@ fields from the related endpoints:
 - `PurchaseOrderAccountAssignment`: combines distinct
    `WBSElementExternalID` values.
 
-Only data retrieval + summarization is implemented. No email sending, no job
-scheduling.
+`POST /run` is the external Job Scheduling trigger. Each run filters overdue
+service items that are not deleted or completely delivered, resolves WBS owners, applies resolved-item
+and five-working-day reminder rules from `PO_NOTIFICATION_LOG`, then sends and
+records successful notifications. Tracking is stored in HANA Cloud; delivery
+uses the existing GraphMail/BTP destination configuration rather than SMTP.
 
 ## ⚠️ Security note
 
@@ -72,8 +77,10 @@ credentials are resolved at runtime:
 ```
 srv/monitor-service.cds        - MonitorService with FetchOpenPOs action
 srv/monitor-service.js         - wires po-reader + ai-agent
-srv/handlers/po-reader.js      - calls S4HC_JournalEntry -> API_PURCHASEORDER_PROCESS_SRV
-srv/handlers/ai-agent.js       - calls GENERATIVE_AI_HUB (Orchestration, gpt-5.4)
+srv/handlers/po-reader.js      - calls S4HC_JournalEntry and resolves WBS owners
+srv/handlers/ai-agent.js       - bounded ReAct tool loop via GENERATIVE_AI_HUB
+srv/handlers/notification-tracking.js - HANA tracking and reminder eligibility
+srv/handlers/notification-service.js - GraphMail delivery
 app/po-monitor-ui/webapp/...   - freestyle UI5 app (GO button + table + summary)
 xs-security.json, mta.yaml     - deployment scaffolding (destinations are NOT created here,
                                   they must already exist as you set them up in cockpit)
@@ -93,21 +100,23 @@ xs-security.json, mta.yaml     - deployment scaffolding (destinations are NOT cr
    npm run watch
    ```
 4. Open the app, e.g. `http://localhost:4004/po-monitor-ui/webapp/index.html`.
-5. Click **GO**. The table fills with open PO items and the AI summary appears
-   above it.
+5. Click **GO** for a read-only report. The scheduled `POST /run` endpoint
+   executes notification processing and requires the HANA and GraphMail
+   destinations to be configured.
 
 ## Notes on the "open PO" filter
 
-`po-reader.js` defines an open PO item as: not deleted
-(`DeletionIndicator eq ''`) and not yet finally invoiced
-(`FinalInvoiceIndicator eq ''`). Adjust the `$filter` in
-`srv/handlers/po-reader.js` if your definition of "open" differs.
+The scheduled workflow selects service items (`ProductTypeCode eq '2'`) that
+are not deleted or completely delivered and have an overdue schedule line.
+There is no additional open-quantity-versus-order-quantity exclusion, so items
+where open quantity equals order quantity remain in the result. OData
+continuation links are followed for item, schedule-line, and account-assignment
+reads.
 
 ## Deploying
 
-`for deployment you don't need to use deployments explicitly` referred to the
-AI model (no AI Core deployment ID needed — Orchestration resolves `gpt-5.4`
-at request time). For deploying the CAP app itself to Cloud Foundry, build and
+The AI Core Orchestration destination resolves the configured model at request
+time. For deploying the CAP app itself to Cloud Foundry, build and
 deploy via MTA as usual:
 ```
 mbt build

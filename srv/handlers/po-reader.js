@@ -5,6 +5,7 @@ const ENTERPRISE_PROJECT_PATH = process.env.ENTERPRISE_PROJECT_PATH || '/sap/opu
 const BUSINESS_PARTNER_PATH = '/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_BusinessPartner';
 const PROJECT_SERVICE_PATH = '/sap/opu/odata/CPD/SC_EXTERNAL_SERVICES_SRV';
 const PROJECT_CONTACT_PATH = '/sap/opu/odata/sap/YY1_PROJECTMANAGERCONTACT_CDS/YY1_ProjectManagerContact';
+const COST_CENTER_PATH = process.env.COST_CENTER_PATH || '/sap/opu/odata4/sap/api_cost_center/srvd_a2x/sap/costcenter/0001/A_CostCenter_2';
 const SCHEDULE_LINE_FIELDS = [
   'PurchaseOrder',
   'PurchaseOrderItem',
@@ -21,7 +22,10 @@ const ACCOUNT_ASSIGNMENT_FIELDS = [
 ];
 const BASIC_ACCOUNT_ASSIGNMENT_FIELDS = ACCOUNT_ASSIGNMENT_FIELDS.filter(field => field !== 'CostCenter');
 const ownerCache = new Map();
-const projectManagerCache = new Map();
+const workPackageCache = new Map();
+const projectCache = new Map();
+const managerEmailCache = new Map();
+const costCenterResponsibleCache = new Map();
 
 function isUnsupportedCostCenterProjection(error) {
   const message = String(error.response?.data?.error?.message || error.message || '');
@@ -29,14 +33,46 @@ function isUnsupportedCostCenterProjection(error) {
 }
 
 function destinationRequest(basePath) {
-  return url => executeHttpRequest(
-    { destinationName: 'S4HC_JournalEntry' },
-    { method: 'get', url: `${basePath}${url}`, headers: { Accept: 'application/json' } }
-  );
+  return url => {
+    const requestPath = url.startsWith('/sap/') ? url : `${basePath}${url}`;
+    return executeHttpRequest(
+      { destinationName: 'S4HC_JournalEntry' },
+      { method: 'get', url: requestPath, headers: { Accept: 'application/json' } }
+    );
+  };
 }
 
 function responseRows(response) {
   return response.data?.value || response.data?.d?.results || [];
+}
+
+function nextPagePath(nextLink, currentPath) {
+  if (!nextLink) return null;
+  if (/^https?:\/\//i.test(nextLink)) {
+    const url = new URL(nextLink);
+    return `${url.pathname}${url.search}`;
+  }
+  if (nextLink.startsWith('/')) return nextLink;
+
+  const currentPathWithoutQuery = currentPath.split('?')[0];
+  const directory = currentPathWithoutQuery.slice(0, currentPathWithoutQuery.lastIndexOf('/') + 1);
+  return `${directory}${nextLink}`;
+}
+
+async function fetchAllRows(request, url) {
+  const rows = [];
+  let page = url;
+
+  while (page) {
+    const response = await request(page);
+    rows.push(...responseRows(response));
+    page = nextPagePath(
+      response.data?.['@odata.nextLink'] || response.data?.d?.__next,
+      page
+    );
+  }
+
+  return rows;
 }
 
 function todayUtc() {
@@ -47,7 +83,7 @@ function escapeOData(value) {
   return String(value).replace(/'/g, "''");
 }
 
-async function resolveWbsOwner(wbsElement, wbsInternalId, request) {
+async function resolveWbsOwner(wbsElement, wbsInternalId, request = destinationRequest(SERVICE_PATH)) {
   const wbs = wbsElement || wbsInternalId;
   if (!wbs) return { ownerEmail: process.env.DEFAULT_OWNER_EMAIL || '', ownerSource: 'default' };
   if (ownerCache.has(wbs)) return ownerCache.get(wbs);
@@ -84,49 +120,163 @@ async function resolveWbsOwner(wbsElement, wbsInternalId, request) {
   }
 }
 
-async function resolveProjectManagerEmail(wbsElements) {
-  const projectNames = [...new Set(wbsElements.map(wbs => wbs.split('.')[0]).filter(Boolean))];
-  const request = destinationRequest('');
-  const managers = [];
+function singleEntity(response) {
+  return response.data?.d || response.data?.value?.[0] || response.data || {};
+}
 
-  for (const projectName of projectNames) {
-    if (projectManagerCache.has(projectName)) {
-      managers.push(projectManagerCache.get(projectName));
-      continue;
+async function getWorkPackage(wbsElement, request) {
+  if (!wbsElement) return null;
+  if (!workPackageCache.has(wbsElement)) {
+    const workPackageId = encodeURIComponent(wbsElement).replace(/'/g, "''");
+    const url = `${PROJECT_SERVICE_PATH}/WorkpackageSet('${workPackageId}')?$format=json`;
+    workPackageCache.set(wbsElement, request(url).then(singleEntity).catch(error => {
+      workPackageCache.delete(wbsElement);
+      throw error;
+    }));
+  }
+  return workPackageCache.get(wbsElement);
+}
+
+async function getProject(projectId, request) {
+  if (!projectId) return null;
+  if (!projectCache.has(projectId)) {
+    const encodedProjectId = encodeURIComponent(projectId).replace(/'/g, "''");
+    const url = `${PROJECT_SERVICE_PATH}/ProjectSet('${encodedProjectId}')?$select=ProjManagerId,ProjManagerName&$format=json`;
+    projectCache.set(projectId, request(url).then(singleEntity).catch(error => {
+      projectCache.delete(projectId);
+      throw error;
+    }));
+  }
+  return projectCache.get(projectId);
+}
+
+async function getProjectManagerEmail(managerId, request) {
+  if (!managerId) return '';
+  if (!managerEmailCache.has(managerId)) {
+    const filter = encodeURIComponent(`WorkAssignment eq '${escapeOData(managerId)}'`);
+    const url = `${PROJECT_CONTACT_PATH}?$filter=${filter}&$select=WorkAssignment,PersonFullName,DefaultEmailAddress&$format=json`;
+    managerEmailCache.set(managerId, fetchAllRows(request, url).then(contacts =>
+      contacts.find(contact => contact.DefaultEmailAddress)?.DefaultEmailAddress || ''
+    ).catch(error => {
+      managerEmailCache.delete(managerId);
+      throw error;
+    }));
+  }
+  return managerEmailCache.get(managerId);
+}
+
+async function resolveCommercialProject(wbsElement, request = destinationRequest(''), context = {}) {
+  if (!wbsElement) return {};
+
+  try {
+    const workPackage = await getWorkPackage(wbsElement, request);
+    if (!workPackage) {
+      console.warn('[PO] WorkpackageSet returned no record; retaining PO item.', {
+        purchaseOrder: context.purchaseOrder,
+        item: context.item,
+        wbsElement
+      });
+    }
+    if (!workPackage?.ProjectID) {
+      return {
+        projectId: workPackage?.ProjectID || '',
+        projectName: workPackage?.ProjectName || '',
+        workPackageId: workPackage?.WorkPackageID || wbsElement,
+        workPackageName: workPackage?.WorkPackageName || ''
+      };
     }
 
+    let project = null;
     try {
-      const projectUrl = `${PROJECT_SERVICE_PATH}/ProjectSet('${encodeURIComponent(projectName)}')?$select=ProjManagerId,ProjManagerName&$format=json`;
-      const projectResponse = await request(projectUrl);
-      const project = projectResponse.data?.d || projectResponse.data || {};
-      if (!project.ProjManagerId) throw new Error('Project manager ID not returned');
-
-      const filter = encodeURIComponent(`WorkAssignment eq '${escapeOData(project.ProjManagerId)}'`);
-      const contactUrl = `${PROJECT_CONTACT_PATH}?$filter=${filter}&$select=WorkAssignment,PersonFullName,DefaultEmailAddress&$format=json`;
-      const contactResponse = await request(contactUrl);
-      const contacts = responseRows(contactResponse);
-      const contact = contacts.find(entry => entry.DefaultEmailAddress) || contacts[0] || {};
-      const manager = {
-        projectName,
-        projectManagerId: project.ProjManagerId,
-        projectManagerName: project.ProjManagerName || contact.PersonFullName || '',
-        projectManagerEmail: contact.DefaultEmailAddress || ''
-      };
-      projectManagerCache.set(projectName, manager);
-      managers.push(manager);
+      project = await getProject(workPackage.ProjectID, request);
     } catch (error) {
-      console.warn('[PO] Project manager email lookup failed.', {
-        projectName,
+      console.warn('[PO] ProjectSet lookup failed; retaining WorkpackageSet details.', {
+        purchaseOrder: context.purchaseOrder,
+        item: context.item,
+        wbsElement,
+        projectId: workPackage.ProjectID,
         status: error.response?.status,
         message: error.message
       });
     }
-  }
+    let projectManagerEmail = '';
+    try {
+      projectManagerEmail = await getProjectManagerEmail(project?.ProjManagerId, request);
+    } catch (error) {
+      console.warn('[PO] Project manager email lookup failed; retaining PO item.', {
+        purchaseOrder: context.purchaseOrder,
+        item: context.item,
+        wbsElement,
+        projectId: workPackage.ProjectID,
+        projectManagerId: project?.ProjManagerId,
+        status: error.response?.status,
+        message: error.message
+      });
+    }
+    if (!project?.ProjManagerId || !project?.ProjManagerName) {
+      console.warn('[PO] ProjectSet did not return all project manager details.', {
+        purchaseOrder: context.purchaseOrder,
+        item: context.item,
+        wbsElement,
+        projectId: workPackage.ProjectID,
+        hasProjectManagerId: Boolean(project?.ProjManagerId),
+        hasProjectManagerName: Boolean(project?.ProjManagerName)
+      });
+    }
 
-  return managers;
+    return {
+      projectId: workPackage.ProjectID || '',
+      projectName: workPackage.ProjectName || '',
+      workPackageId: workPackage.WorkPackageID || wbsElement,
+      workPackageName: workPackage.WorkPackageName || '',
+      projectManagerId: project?.ProjManagerId || '',
+      projectManagerName: project?.ProjManagerName || '',
+      projectManagerEmail
+    };
+  } catch (error) {
+    console.warn('[PO] Commercial Project enrichment failed; retaining PO item.', {
+      purchaseOrder: context.purchaseOrder,
+      item: context.item,
+      wbsElement,
+      status: error.response?.status,
+      message: error.message
+    });
+    return {
+      projectId: '',
+      projectName: '',
+      workPackageId: wbsElement,
+      workPackageName: '',
+      projectManagerId: '',
+      projectManagerName: '',
+      projectManagerEmail: ''
+    };
+  }
 }
 
-async function fetchOpenPOs() {
+async function resolveCostCenterResponsible(costCenter, request = destinationRequest(''), context = {}) {
+  if (!costCenter) return '';
+  if (costCenterResponsibleCache.has(costCenter)) return costCenterResponsibleCache.get(costCenter);
+
+  try {
+    const filter = encodeURIComponent(`CostCenter eq '${escapeOData(costCenter)}'`);
+    const select = encodeURIComponent('CostCenter,CostCtrResponsiblePersonName');
+    const rows = await fetchAllRows(request, `${COST_CENTER_PATH}?$filter=${filter}&$select=${select}&$format=json`);
+    const responsible = rows.find(row => row.CostCtrResponsiblePersonName)?.CostCtrResponsiblePersonName || '';
+    costCenterResponsibleCache.set(costCenter, responsible);
+    return responsible;
+  } catch (error) {
+    console.warn('[PO] Cost Center responsible lookup failed; retaining PO item.', {
+      purchaseOrder: context.purchaseOrder,
+      item: context.item,
+      costCenter,
+      status: error.response?.status,
+      message: error.message
+    });
+    return '';
+  }
+}
+
+async function fetchOpenPOs({ resolveOwners = true } = {}) {
   const baseRequest = destinationRequest(SERVICE_PATH);
   const itemFilter = encodeURIComponent(
     "ProductTypeCode eq '2' and IsCompletelyDelivered eq false and PurchasingDocumentDeletionCode eq ''"
@@ -142,12 +292,11 @@ async function fetchOpenPOs() {
     'IsCompletelyDelivered',
     'PurchasingDocumentDeletionCode'
   ].join(','));
-  const itemResponse = await baseRequest(
+  const items = await fetchAllRows(
+    baseRequest,
     `/PurchaseOrderItem?$filter=${itemFilter}&$select=${itemSelect}&$top=50`
   );
   const today = todayUtc();
-
-  const items = responseRows(itemResponse);
   const results = [];
 
   for (const row of items) {
@@ -158,9 +307,9 @@ async function fetchOpenPOs() {
     );
     const related = fields => encodeURIComponent(fields.join(','));
 
-    const [scheduleResponse, accountResponse] = await Promise.all([
-      baseRequest(`/PurchaseOrderScheduleLine?$filter=${itemFilter}&$select=${related(SCHEDULE_LINE_FIELDS)}`),
-      baseRequest(`/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(ACCOUNT_ASSIGNMENT_FIELDS)}`)
+    const [schedules, assignments] = await Promise.all([
+      fetchAllRows(baseRequest, `/PurchaseOrderScheduleLine?$filter=${itemFilter}&$select=${related(SCHEDULE_LINE_FIELDS)}`),
+      fetchAllRows(baseRequest, `/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(ACCOUNT_ASSIGNMENT_FIELDS)}`)
         .catch(async error => {
           if (!isUnsupportedCostCenterProjection(error)) throw error;
 
@@ -170,11 +319,9 @@ async function fetchOpenPOs() {
             status: error.response?.status,
             message: error.message
           });
-          return baseRequest(`/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(BASIC_ACCOUNT_ASSIGNMENT_FIELDS)}`);
+          return fetchAllRows(baseRequest, `/PurchaseOrderAccountAssignment?$filter=${itemFilter}&$select=${related(BASIC_ACCOUNT_ASSIGNMENT_FIELDS)}`);
         })
     ]);
-    const schedules = responseRows(scheduleResponse);
-    const assignments = responseRows(accountResponse);
     const overdueSchedules = schedules.filter(line =>
       line.ScheduleLineDeliveryDate && line.ScheduleLineDeliveryDate < today
     );
@@ -186,10 +333,20 @@ async function fetchOpenPOs() {
       0
     );
     const orderQuantity = Number(row.OrderQuantity) || 0;
+
     const wbsElements = [...new Set(assignments.map(a => a.WBSElementExternalID).filter(Boolean))];
     const wbsInternalIds = [...new Set(assignments.map(a => a.WBSElementInternalID).filter(Boolean))];
-    const owner = await resolveWbsOwner(wbsElements[0], wbsInternalIds[0], baseRequest);
-    const projectManagers = await resolveProjectManagerEmail(wbsElements);
+    const owner = resolveOwners
+      ? await resolveWbsOwner(wbsElements[0], wbsInternalIds[0], baseRequest)
+      : { ownerEmail: '', ownerName: '', ownerSource: '' };
+    const projectDetails = resolveOwners
+      ? await Promise.all(wbsElements.map(wbs => resolveCommercialProject(wbs, destinationRequest(''), { purchaseOrder, item })))
+      : [];
+    const costCenter = [...new Set(assignments.map(assignment => assignment.CostCenter).filter(Boolean))];
+    const costCenterResponsible = !wbsElements.length && costCenter.length
+      ? await Promise.all(costCenter.map(center => resolveCostCenterResponsible(center, undefined, { purchaseOrder, item })))
+      : [];
+    const projectManagerIds = [...new Set(projectDetails.map(project => project.projectManagerId).filter(Boolean))];
     const latestOverdue = overdueSchedules
       .map(line => line.ScheduleLineDeliveryDate)
       .sort()
@@ -209,17 +366,18 @@ async function fetchOpenPOs() {
       performancePeriodEndDate: overdueSchedules.map(line => line.PerformancePeriodEndDate).filter(Boolean).sort().at(-1) || null,
       wbsElement: wbsElements.join(', '),
       wbsElementInternalId: wbsInternalIds.join(', '),
-      projectId: '',
-      projectName: '',
-      workPackageId: wbsElements.join(', '),
-      workPackageName: '',
-      costCenter: [...new Set(assignments.map(assignment => assignment.CostCenter).filter(Boolean))].join(', '),
-      costCenterResponsible: '',
+      projectId: [...new Set(projectDetails.map(project => project.projectId).filter(Boolean))].join(', '),
+      projectName: [...new Set(projectDetails.map(project => project.projectName).filter(Boolean))].join(', '),
+      workPackageId: [...new Set(projectDetails.map(project => project.workPackageId).filter(Boolean))].join(', '),
+      workPackageName: [...new Set(projectDetails.map(project => project.workPackageName).filter(Boolean))].join(', '),
+      costCenter: costCenter.join(', '),
+      costCenterResponsible: [...new Set(costCenterResponsible.filter(Boolean))].join(', '),
       ownerEmail: owner.ownerEmail,
       ownerName: owner.ownerName || '',
       ownerSource: owner.ownerSource,
-      projectManagerEmail: [...new Set(projectManagers.map(manager => manager.projectManagerEmail).filter(Boolean))].join(', '),
-      projectManagerName: [...new Set(projectManagers.map(manager => manager.projectManagerName).filter(Boolean))].join(', '),
+      projectManagerId: projectManagerIds.join(', '),
+      projectManagerEmail: [...new Set(projectDetails.map(project => project.projectManagerEmail).filter(Boolean))].join(', '),
+      projectManagerName: [...new Set(projectDetails.map(project => project.projectManagerName).filter(Boolean))].join(', '),
       isCompletelyDelivered: row.IsCompletelyDelivered,
       deletionCode: row.PurchasingDocumentDeletionCode
     });
@@ -235,12 +393,12 @@ async function fetchTrackedPOStatus(purchaseOrder, item) {
   );
   const itemSelect = encodeURIComponent('PurchaseOrder,PurchaseOrderItem,IsCompletelyDelivered');
   const scheduleSelect = encodeURIComponent('OpenPurchaseOrderQuantity');
-  const [itemResponse, scheduleResponse] = await Promise.all([
-    request(`/PurchaseOrderItem?$filter=${filter}&$select=${itemSelect}`),
-    request(`/PurchaseOrderScheduleLine?$filter=${filter}&$select=${scheduleSelect}`)
+  const [itemRows, scheduleRows] = await Promise.all([
+    fetchAllRows(request, `/PurchaseOrderItem?$filter=${filter}&$select=${itemSelect}`),
+    fetchAllRows(request, `/PurchaseOrderScheduleLine?$filter=${filter}&$select=${scheduleSelect}`)
   ]);
-  const itemRow = responseRows(itemResponse)[0] || {};
-  const openPurchaseOrderQuantity = responseRows(scheduleResponse).reduce(
+  const itemRow = itemRows[0] || {};
+  const openPurchaseOrderQuantity = scheduleRows.reduce(
     (sum, line) => sum + (Number(line.OpenPurchaseOrderQuantity) || 0),
     0
   );
@@ -251,4 +409,10 @@ async function fetchTrackedPOStatus(purchaseOrder, item) {
   };
 }
 
-module.exports = { fetchOpenPOs, fetchTrackedPOStatus, resolveProjectManagerEmail, resolveWbsOwner };
+module.exports = {
+  fetchOpenPOs,
+  fetchTrackedPOStatus,
+  resolveCommercialProject,
+  resolveCostCenterResponsible,
+  resolveWbsOwner
+};

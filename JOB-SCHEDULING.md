@@ -14,13 +14,11 @@ SAP BTP Job Scheduling Service
 Cloud Foundry application: po-monitor-demo-test
         |
         v
-Fetch open PO items from S/4HANA Cloud
+      AI-guided tool loop: fetch overdue POs, resolve WBS owners,
+      check HANA tracking, and send eligible GraphMail notifications
         |
         v
-Generate an AI summary through SAP Generative AI Hub
-        |
-        v
-Return summary, count, and PO items as JSON
+      Return summary, PO items, and tracking/delivery counts as JSON
 ```
 
 The scheduler does not contain the PO business logic. It only calls the application's HTTP trigger endpoint.
@@ -70,11 +68,11 @@ The custom CAP bootstrap registers two routes:
 
 The `POST /run` flow is:
 
-1. Call `fetchAndSummarizeOpenPOs()`.
-2. Read open purchase orders from S/4HANA.
-3. Generate the AI summary.
-4. Return `status`, `source`, `summary`, `count`, and `pos` as JSON.
-5. Return HTTP 500 if the job fails.
+1. Call `fetchAndSummarizeOpenPOs({ processNotifications: true })`.
+2. Use SAP AI Core Orchestration (default model `gpt-4o-mini`) to select each next tool in the bounded ReAct workflow.
+3. Fetch overdue service items that are not deleted or completely delivered, regardless of whether open quantity equals ordered quantity; resolve owners; evaluate HANA tracking; send eligible first notices or reminders through GraphMail.
+4. Return `status`, `source`, `summary`, `count`, `pos`, and tracking/delivery counts as JSON.
+5. Return HTTP 500 if the tool workflow cannot complete safely.
 
 The file also explicitly starts the CAP server with `cds.server()`. This was required because the first custom entrypoint only registered a bootstrap hook and exited immediately in Cloud Foundry.
 
@@ -94,12 +92,12 @@ The local development command remains:
 
 ### `srv/handlers/ai-agent.js`
 
-The scheduler uses the same agent orchestration as the CAP action:
+The scheduled endpoint runs the notification agent; the CAP UI action remains read-only:
 
-- `fetchAndSummarizeOpenPOs()` fetches PO data and creates the summary.
-- `summarizePOs()` calls SAP AI Core / Generative AI Hub through the `GENERATIVE_AI_HUB` destination.
-- A fallback summary is returned if the AI call fails.
-- Structured log events are written for start, fetch completion, summary completion, and fallback behavior.
+- `fetchAndSummarizeOpenPOs({ processNotifications: true })` runs the tool loop.
+- Tool selection uses `AI_AGENT_MODEL` or defaults to `gpt-4o-mini`; PO business checks and notification delivery remain server-side.
+- HANA tracking failure prevents duplicate-prone delivery; failed sends are not recorded as delivered.
+- Structured logs record tool observations and owner fallback sources, not private chain-of-thought.
 
 ## 4. Cron expression
 

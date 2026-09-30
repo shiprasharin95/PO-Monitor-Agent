@@ -39,6 +39,41 @@ service MonitorService {
     summary : String;
     count   : Integer;
     pos     : array of PO;
+    tracking : Tracking;
+  }
+
+  type NotificationFailure {
+    purchaseOrder : String;
+    item          : String;
+    recipient     : String;
+    error         : String;
+  }
+
+  type NotificationOutcome {
+    purchaseOrder : String;
+    item          : String;
+    status        : String;
+    recipient     : String;
+    ownerSource   : String;
+    isReminder    : Boolean;
+    lastNotified  : Timestamp;
+    error         : String;
+  }
+
+  type Tracking {
+    enabled             : Boolean;
+    eligible            : Integer;
+    skipped             : Integer;
+    notified            : Integer;
+    failed              : Integer;
+    autoResolved        : Integer;
+    suppressed          : Integer;
+    resolved            : Integer;
+    items               : array of NotificationOutcome;
+    failures            : array of NotificationFailure;
+    reason              : String;
+    notificationSender  : String;
+    trackingStore       : String;
   }
 
   action FetchOpenPOs() returns Result;
