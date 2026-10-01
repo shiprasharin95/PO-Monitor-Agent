@@ -166,23 +166,29 @@ async function recordNotification(purchaseOrder, item, recipientEmail, notifiedA
 
   const tx = cds.db;
   const existing = await getLog(tx, purchaseOrder, item);
+  const now = new Date(notifiedAt);
 
   if (!existing) {
     await tx.run(INSERT.into(getLogEntity()).entries({
       purchaseOrder,
       item,
       recipientEmail,
-      firstNotified: notifiedAt,
-      lastNotified: notifiedAt,
+      firstNotified: now,
+      lastNotified: now,
       resolved: false,
       resolvedDate: null
     }));
     return;
   }
 
+  const existingLastNotified = existing.lastNotified ? new Date(existing.lastNotified).getTime() : 0;
+  if (existingLastNotified >= now.getTime() - 60000) {
+    return;
+  }
+
   await tx.run(
     UPDATE(getLogEntity())
-      .set({ recipientEmail, lastNotified: notifiedAt, resolved: false, resolvedDate: null })
+      .set({ recipientEmail, lastNotified: now, resolved: false, resolvedDate: null })
       .where({ purchaseOrder, item })
   );
 }

@@ -1,10 +1,19 @@
 {
-  "xsappname": "po-monitor-demo-${space}",
+  "xsappname": "po-monitor-demo-test",
   "tenant-mode": "dedicated",
+  "oauth2-configuration": {
+    "redirect-uris": [
+      "https://po-monitor-demo-approuter.cfapps.eu20-001.hana.ondemand.com/login/callback"
+    ]
+  },
   "scopes": [
     {
       "name": "$XSAPPNAME.User",
       "description": "PO Monitor User"
+    },
+    {
+      "name": "$XSAPPNAME.JobRunner",
+      "description": "Permission to trigger the scheduled notification workflow"
     }
   ],
   "role-templates": [
@@ -20,6 +29,13 @@
       "description": "PO Monitor User",
       "scope-references": [
         "$XSAPPNAME.User"
+      ]
+    },
+    {
+      "name": "POJobRunner",
+      "description": "Permission to trigger the scheduled notification workflow",
+      "scope-references": [
+        "$XSAPPNAME.JobRunner"
       ]
     }
   ]

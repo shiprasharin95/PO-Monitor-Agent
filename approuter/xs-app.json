@@ -1,0 +1,45 @@
+{
+  "authenticationMethod": "route",
+  "routes": [
+    {
+      "source": "^/$",
+      "target": "/po-monitor-ui/webapp/index.html",
+      "destination": "po-monitor-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/po-monitor-ui/(.*)$",
+      "target": "/po-monitor-ui/$1",
+      "destination": "po-monitor-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/odata/(.*)$",
+      "target": "/odata/$1",
+      "destination": "po-monitor-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/run$",
+      "target": "/run",
+      "destination": "po-monitor-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^(.*)$",
+      "target": "$1",
+      "destination": "po-monitor-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    }
+  ],
+  "logout": {
+    "logoutEndpoint": "/logout",
+    "logoutMethod": "POST",
+    "csrfProtection": true
+  }
+}

@@ -1,12 +1,24 @@
 const cds = require('@sap/cds');
 const { fetchAndSummarizeOpenPOs } = require('./srv/handlers/ai-agent');
 
+function hasRole(user, role) {
+  return user && typeof user.is === 'function' && user.is(role);
+}
+
+function requireJobRunner(req, res, next) {
+  const user = req.user || cds.context?.user;
+  if (!user || (!hasRole(user, 'POJobRunner') && !hasRole(user, 'POMonitorUser'))) {
+    return res.status(403).json({ status: 'ERROR', message: 'POMonitorUser or POJobRunner role required.' });
+  }
+  return next();
+}
+
 cds.on('bootstrap', app => {
   app.get('/', (req, res) => {
     res.type('text/plain').send('PO Monitor Agent is running. Use /run to trigger the daily job.');
   });
 
-  app.post('/run', async (req, res) => {
+  app.post('/run', requireJobRunner, async (req, res) => {
     try {
       const result = await fetchAndSummarizeOpenPOs({ processNotifications: true });
       return res.status(200).json({
@@ -28,6 +40,10 @@ async function startServer() {
   return cds.server();
 }
 
+module.exports = startServer;
+module.exports.hasRole = hasRole;
+module.exports.requireJobRunner = requireJobRunner;
+
 if (require.main === module) {
   startServer()
     .then(server => {
@@ -40,4 +56,3 @@ if (require.main === module) {
     });
 }
 
-module.exports = startServer;

@@ -1,3 +1,4 @@
+@requires: 'POMonitorUser'
 service MonitorService {
 
   type PO {

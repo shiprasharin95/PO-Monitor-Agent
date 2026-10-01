@@ -1,7 +1,7 @@
 const { OrchestrationClient } = require('@sap-ai-sdk/orchestration');
 const { fetchOpenPOs, fetchTrackedPOStatus, resolveCommercialProject, resolveCostCenterResponsible, resolveWbsOwner } = require('./po-reader');
 const { attachTrackingState, autoResolveTrackedItems, checkTrackingLog, isHanaTrackingAvailable, recordNotification } = require('./notification-tracking');
-const { sendPONotification } = require('./notification-service');
+const { sendPONotification, sanitizePOForAI } = require('./notification-service');
 
 const AI_MODEL = process.env.AI_AGENT_MODEL || 'gpt-4o-mini';
 const MAX_REACT_STEPS = 8;
@@ -350,9 +350,10 @@ async function summarizePOs(pos, runContext = {}) {
       { destinationName: 'GENERATIVE_AI_HUB' }
     );
 
+    const safeRows = sanitizePOForAI(rows);
     const response = await client.chatCompletion({
       placeholderValues: {
-        poData: JSON.stringify(rows),
+        poData: JSON.stringify(safeRows),
         runContext: JSON.stringify(runContext)
       }
     });

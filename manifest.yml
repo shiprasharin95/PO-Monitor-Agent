@@ -6,13 +6,47 @@ applications:
     memory: 512M
     disk_quota: 512M
     instances: 1
+    routes:
+      - route: po-monitor-demo-test.apps.internal
+    health-check-type: process
     command: npm start
     services:
       - cap-rest-destination
       - Job_Scheduling
       - po-monitor-hana
+      - po-monitor-xsuaa-test
     env:
       NODE_ENV: production
       MAIL_FROM: cap-notifications@bearingpoint.com
       DEFAULT_OWNER_EMAIL: shipra.sharin@bearingpoint.com
+      ALLOWED_NOTIFICATION_DOMAINS: bearingpoint.com,sap.com
       ENTERPRISE_PROJECT_PATH: /sap/opu/odata/sap/API_ENTERPRISE_PROJECT_SRV/A_EnterpriseProject
+      destinations: |
+        [
+          {
+            "name": "po-monitor-backend",
+            "url": "http://po-monitor-demo-test.apps.internal:8080",
+            "forwardAuthToken": true
+          }
+        ]
+
+  - name: po-monitor-demo-approuter
+    path: approuter
+    buildpacks:
+      - nodejs_buildpack
+    memory: 256M
+    disk_quota: 256M
+    instances: 1
+    command: npm start
+    services:
+      - po-monitor-xsuaa-test
+    env:
+      NODE_ENV: production
+      destinations: |
+        [
+          {
+            "name": "po-monitor-backend",
+            "url": "http://po-monitor-demo-test.apps.internal:8080",
+            "forwardAuthToken": true
+          }
+        ]
