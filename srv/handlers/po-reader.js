@@ -85,7 +85,7 @@ function escapeOData(value) {
 
 async function resolveWbsOwner(wbsElement, wbsInternalId, request = destinationRequest(SERVICE_PATH)) {
   const wbs = wbsElement || wbsInternalId;
-  if (!wbs) return { ownerEmail: process.env.DEFAULT_OWNER_EMAIL || '', ownerSource: 'default' };
+  if (!wbs) return { ownerEmail: '', ownerSource: 'unresolved' };
   if (ownerCache.has(wbs)) return ownerCache.get(wbs);
 
   try {
@@ -102,19 +102,19 @@ async function resolveWbsOwner(wbsElement, wbsInternalId, request = destinationR
     );
     const partner = partnerResponse.data?.d || partnerResponse.data || {};
     const result = {
-      ownerEmail: partner.EmailAddress || process.env.DEFAULT_OWNER_EMAIL || '',
+      ownerEmail: partner.EmailAddress || '',
       ownerName: partner.BusinessPartnerFullName || '',
-      ownerSource: partner.EmailAddress ? 'wbs-owner' : 'default'
+      ownerSource: partner.EmailAddress ? 'wbs-owner' : 'unresolved'
     };
     ownerCache.set(wbs, result);
     return result;
   } catch (error) {
-    console.warn('[PO] WBS owner resolution failed; using DEFAULT_OWNER_EMAIL.', {
+    console.warn('[PO] WBS owner resolution failed.', {
       wbs,
       status: error.response?.status,
       message: error.message
     });
-    const result = { ownerEmail: process.env.DEFAULT_OWNER_EMAIL || '', ownerSource: 'default' };
+    const result = { ownerEmail: '', ownerSource: 'unresolved' };
     ownerCache.set(wbs, result);
     return result;
   }

@@ -7,13 +7,13 @@ const AI_MODEL = process.env.AI_AGENT_MODEL || 'gpt-4o-mini';
 const MAX_REACT_STEPS = 8;
 const AGENT_SYSTEM_PROMPT = `
 You are an autonomous SAP procurement monitoring agent running on SAP BTP.
-For each daily run, use the registered tools in this order: fetch overdue purchase order items, resolve each item's WBS owner (using DEFAULT_OWNER_EMAIL as fallback), check each item's tracking log, then send first notifications or reminders only for eligible unresolved items. HANA tracking suppresses reminders until five working days have elapsed. Summarize the number of purchase orders found, notifications sent, suppressed items, and resolved items.
+For each daily run, use the registered tools in this order: fetch overdue purchase order items, resolve each item's WBS owner and project manager, check each item's tracking log, then send first notifications or reminders only to the project manager for eligible unresolved items. If the project-manager email is missing, skip the notification; never use the WBS owner or a default mailbox as a recipient. HANA tracking suppresses reminders until five working days have elapsed. Summarize the number of purchase orders found, notifications sent, skipped items, suppressed items, and resolved items.
 Only select a tool that is explicitly allowed in the current context. The application executes tools and supplies their observations. Never claim a tool ran unless its result appears in observations. Do not invent data or expose private chain-of-thought. Return only one JSON object: {"tool":"<allowed tool name>","arguments":{}}.
 `.trim();
 
 const REACT_TOOLS = {
   fetch_overdue_pos: 'Fetch overdue service PO items that are not deleted or completely delivered from S/4HANA.',
-  resolve_wbs_owner: 'Resolve the WBS owner for every fetched item; use the configured default owner when needed.',
+  resolve_wbs_owner: 'Resolve WBS owner and project-manager details for every fetched item; do not substitute a default email address.',
   check_tracking_log: 'Check HANA notification history and apply resolved and five-working-day rules.',
   send_notification: 'Send notifications for all eligible items and record only successful deliveries.'
 };
@@ -63,7 +63,7 @@ async function fetchAndSummarizeOpenPOs({ processNotifications = false } = {}) {
         purchaseOrder: po.purchaseOrder,
         item: po.item,
         status: po.notificationStatus || 'not-processed',
-        recipient: po.ownerEmail || null,
+        recipient: po.projectManagerEmail || null,
         ownerSource: po.ownerSource || null,
         isReminder: false,
         lastNotified: po.lastNotified || null,
@@ -227,9 +227,13 @@ async function runReActAgent() {
       observation = [];
       for (const entry of pendingDelivery) {
         entry.deliveryAttempted = true;
+        if (!entry.po.projectManagerEmail) {
+          entry.delivery = { status: 'skipped', error: 'Project-manager email is unavailable.' };
+          observation.push({ purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, ...entry.delivery });
+          continue;
+        }
         try {
           if (autoResolveFailure) throw new Error('Auto-resolution failed; notifications withheld.');
-          if (!entry.po.ownerEmail) throw new Error('No WBS owner or DEFAULT_OWNER_EMAIL is available.');
           const delivery = await sendPONotification(entry.po, {
             isReminder: Boolean(entry.tracking.lastNotified)
           });
@@ -265,6 +269,7 @@ async function runReActAgent() {
   const processed = [...entries.values()];
   const sent = processed.filter(entry => entry.delivery?.status === 'sent');
   const failed = processed.filter(entry => entry.delivery?.status === 'failed');
+  const skippedDelivery = processed.filter(entry => entry.delivery?.status === 'skipped');
   const suppressed = processed.filter(entry => entry.tracking?.status === 'suppressed');
   const resolved = processed.filter(entry => entry.tracking?.status === 'resolved');
   const trackingEnabled = isHanaTrackingAvailable()
@@ -272,7 +277,7 @@ async function runReActAgent() {
   const tracking = {
     enabled: trackingEnabled,
     eligible: processed.filter(entry => entry.tracking?.eligible).length,
-    skipped: processed.filter(entry => !entry.tracking?.eligible).length,
+    skipped: processed.filter(entry => !entry.tracking?.eligible).length + skippedDelivery.length,
     notified: sent.length,
     failed: failed.length,
     autoResolved,
@@ -282,7 +287,7 @@ async function runReActAgent() {
       purchaseOrder: entry.po.purchaseOrder,
       item: entry.po.item,
       status: entry.delivery?.status || entry.tracking?.status || 'not-processed',
-      recipient: entry.delivery?.recipient || entry.po.ownerEmail || process.env.DEFAULT_OWNER_EMAIL || null,
+      recipient: entry.delivery?.recipient || entry.po.projectManagerEmail || null,
       ownerSource: entry.po.ownerSource || null,
       isReminder: Boolean(entry.delivery?.status === 'sent' && entry.tracking?.lastNotified),
       lastNotified: entry.tracking?.lastNotified || null,
@@ -291,7 +296,7 @@ async function runReActAgent() {
     failures: failed.map(entry => ({
       purchaseOrder: entry.po.purchaseOrder,
       item: entry.po.item,
-      recipient: entry.po.ownerEmail || process.env.DEFAULT_OWNER_EMAIL || '',
+      recipient: entry.po.projectManagerEmail || '',
       error: entry.delivery.error
     })),
     reason: autoResolveFailure?.message || (!trackingEnabled ? 'HANA tracking unavailable; notifications withheld.' : null),

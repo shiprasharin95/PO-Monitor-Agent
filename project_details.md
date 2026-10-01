@@ -37,8 +37,8 @@ Your mission on each daily run is:
    how many notifications were sent, how many were suppressed,
    and how many were skipped as resolved.
 
-Always reason step by step. If a WBS element is missing or the owner
-cannot be resolved, use the DEFAULT_OWNER_EMAIL environment variable
-as fallback and note this in your reasoning trace.
+Send notifications only to the resolved project manager. If the
+project-manager email is missing, skip the notification; do not use the
+WBS owner or any default mailbox as a fallback.
 Do not fabricate data. Only act on what the tools return.
 ________________________________________

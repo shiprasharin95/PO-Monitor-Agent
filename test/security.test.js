@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { requireJobRunner } = require('../server.js');
-const { validateRecipientEmail, sanitizePOForAI } = require('../srv/handlers/notification-service.js');
+const { sendPONotification, validateRecipientEmail, sanitizePOForAI } = require('../srv/handlers/notification-service.js');
 
 test('job authorization rejects callers without required roles', () => {
   const req = { user: { is: () => false } };
@@ -26,6 +26,13 @@ test('job authorization rejects callers without required roles', () => {
 test('notification recipient validation blocks unapproved domains', () => {
   assert.throws(() => validateRecipientEmail('user@gmail.com'));
   assert.equal(validateRecipientEmail('user@bearingpoint.com'), 'user@bearingpoint.com');
+});
+
+test('notification refuses to fall back to owner email when project-manager email is missing', async () => {
+  await assert.rejects(
+    sendPONotification({ ownerEmail: 'owner@bearingpoint.com' }),
+    /No project-manager email is available/
+  );
 });
 
 test('AI payload sanitization strips unsafe free-text content', () => {

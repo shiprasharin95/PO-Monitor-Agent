@@ -166,7 +166,7 @@ Manual tasks still required:
   ```
 
 5. Ensure the existing `cap-rest-destination` service binding can resolve this destination.
-6. Recipients are the resolved WBS owner (`ownerEmail`), falling back to `DEFAULT_OWNER_EMAIL`.
+6. Recipients are only the resolved project manager (`projectManagerEmail`). If that address is missing, the item is skipped and no email is sent; there is no owner or default-mailbox fallback.
 7. Verify the enterprise-project entity path in `ENTERPRISE_PROJECT_PATH`; the current default is `A_EnterpriseProject`.
 8. Never put Graph client secrets or OAuth credentials in this repository.
 
@@ -186,11 +186,11 @@ Graph destination must be configured and authorized to send from this mailbox.
 1. Auto-resolve tracked items whose current S/4HANA status is delivered or has zero open quantity.
 2. Use the ReAct loop with SAP AI Core Orchestration (`gpt-4o-mini` by default; override with `AI_AGENT_MODEL`) to select the next permitted tool.
 3. Fetch service PO items that are not deleted or completely delivered and have an overdue schedule line; retain the earlier behavior without filtering on open quantity versus order quantity, including items where both quantities are equal. Follow OData continuation links.
-4. Resolve the WBS responsible owner through Enterprise Project and Business Partner OData; use `DEFAULT_OWNER_EMAIL` if resolution fails.
+4. Resolve WBS ownership and project-manager details through Enterprise Project and related OData APIs. A missing project-manager email means the notification is skipped; no default recipient is substituted.
 5. Check HANA tracking for each item; skip resolved items, suppress reminders before five weekdays have elapsed, and permit a first notification or reminder when eligible.
-6. Send GraphMail to the WBS owner; reminder emails are labeled as reminders.
+6. Send GraphMail only to the project manager; skip items with no project-manager email. Reminder emails are labeled as reminders.
 7. Record `LAST_NOTIFIED` only after a successful Graph response.
-8. Return counts for found items, eligible, sent, failed, suppressed, resolved, and automatically resolved items. Tool actions and fallback owner sources are logged without model chain-of-thought.
+8. Return counts for found items, eligible, sent, failed, skipped, suppressed, resolved, and automatically resolved items. Tool actions are logged without model chain-of-thought.
 
 Failed email delivery is reported per PO item and does not create a tracking record. HANA tracking and GraphMail are retained as the existing BTP integrations; PostgreSQL and SMTP/Nodemailer from the reference architecture are not used by this project.
 
@@ -204,9 +204,9 @@ The deployed test run verified:
 - HANA tracking was enabled.
 - 21 items were eligible and none were suppressed.
 - No tracking rows were created because email delivery was not successful.
-- Owner resolution previously fell back to an empty `DEFAULT_OWNER_EMAIL`; the configured fallback is now `shipra.sharin@bearingpoint.com`.
+- Notifications are sent only when a project-manager email is resolved; missing addresses are skipped without a fallback recipient.
 
-The next live run should show `notified > 0` only after both the WBS owner API path and
+The next live run should show `notified > 0` only after the project-manager API path and
 `AzureMailService` are configured and visible to the app's bound Destination service.
 
 ## Auto-resolution

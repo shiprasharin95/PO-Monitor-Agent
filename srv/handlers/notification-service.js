@@ -83,9 +83,9 @@ function buildNotificationBody(po, { isReminder = false } = {}) {
 }
 
 async function sendPONotification(po, { isReminder = false } = {}) {
-  const recipientEmail = po.projectManagerEmail || po.ownerEmail;
+  const recipientEmail = normalizeEmail(po.projectManagerEmail);
   if (!recipientEmail) {
-    throw new Error('No project-manager or owner email is available for notification delivery.');
+    throw new Error('No project-manager email is available for notification delivery.');
   }
 
   const recipient = validateRecipientEmail(recipientEmail);
