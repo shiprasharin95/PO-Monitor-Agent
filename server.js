@@ -1,4 +1,5 @@
 const cds = require('@sap/cds');
+const { randomUUID } = require('node:crypto');
 const { fetchAndSummarizeOpenPOs } = require('./srv/handlers/ai-agent');
 
 function hasRole(user, role) {
@@ -7,8 +8,8 @@ function hasRole(user, role) {
 
 function requireJobRunner(req, res, next) {
   const user = req.user || cds.context?.user;
-  if (!user || (!hasRole(user, 'POJobRunner') && !hasRole(user, 'POMonitorUser'))) {
-    return res.status(403).json({ status: 'ERROR', message: 'POMonitorUser or POJobRunner role required.' });
+  if (!hasRole(user, 'JobRunner')) {
+    return res.status(403).json({ status: 'ERROR', message: 'JobRunner scope required.' });
   }
   return next();
 }
@@ -27,10 +28,15 @@ cds.on('bootstrap', app => {
         ...result
       });
     } catch (err) {
-      console.error('[JOB] Daily run failed:', err);
+      const incidentId = randomUUID();
+      console.error('[JOB] Daily run failed.', {
+        incidentId,
+        errorCode: String(err.code || err.name || 'JOB_ERROR').slice(0, 80)
+      });
       return res.status(500).json({
         status: 'ERROR',
-        message: err.message || 'Daily PO monitor job failed.'
+        message: 'Daily PO monitor job failed. Contact support with the incident ID.',
+        incidentId
       });
     }
   });
@@ -51,7 +57,9 @@ if (require.main === module) {
       console.log(`CAP server listening on http://localhost:${address.port}`);
     })
     .catch(err => {
-      console.error('Failed to start CAP server:', err);
+      console.error('Failed to start CAP server.', {
+        errorCode: String(err.code || err.name || 'STARTUP_ERROR').slice(0, 80)
+      });
       process.exit(1);
     });
 }

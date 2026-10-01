@@ -1,8 +1,20 @@
 const cds = require('@sap/cds');
+const { createHash } = require('node:crypto');
 const { SELECT, INSERT, UPDATE } = cds.ql;
 
 function getLogEntity() {
   return cds.entities('po.monitor').PO_NOTIFICATION_LOG;
+}
+
+function getClaimEntity() {
+  return cds.entities('po.monitor').PO_NOTIFICATION_CLAIM;
+}
+
+function createNotificationIdempotencyKey(purchaseOrder, item, lastNotified) {
+  const notificationPeriod = lastNotified ? new Date(lastNotified).toISOString() : 'first';
+  return createHash('sha256')
+    .update(`${purchaseOrder}\u0000${item}\u0000${notificationPeriod}`)
+    .digest('hex');
 }
 
 function hasHanaBinding() {
@@ -101,7 +113,9 @@ async function attachTrackingState(pos, now = new Date()) {
       };
     });
   } catch (error) {
-    console.error('[PO] Could not load notification tracking state for UI.', error);
+    console.error('[PO] Could not load notification tracking state for UI.', {
+      errorCode: String(error.code || error.name || 'HANA_ERROR').slice(0, 80)
+    });
     return pos.map(po => ({
       ...po,
       lastNotified: null,
@@ -193,6 +207,43 @@ async function recordNotification(purchaseOrder, item, recipientEmail, notifiedA
   );
 }
 
+async function claimNotification(purchaseOrder, item, lastNotified) {
+  if (!cds.db || !hasHanaBinding()) {
+    throw new Error('Cannot claim notification: HANA Cloud service is not bound.');
+  }
+
+  const idempotencyKey = createNotificationIdempotencyKey(purchaseOrder, item, lastNotified);
+  try {
+    await cds.db.run(INSERT.into(getClaimEntity()).entries({
+      idempotencyKey,
+      purchaseOrder,
+      item,
+      status: 'CLAIMED',
+      outcomeCode: null,
+      completedAt: null
+    }));
+    return idempotencyKey;
+  } catch (insertError) {
+    const existing = await cds.db.run(
+      SELECT.one.from(getClaimEntity()).where({ idempotencyKey })
+    ).catch(() => null);
+    if (existing) return null;
+    throw insertError;
+  }
+}
+
+async function completeNotificationClaim(idempotencyKey, status, outcomeCode = null) {
+  if (!cds.db || !hasHanaBinding()) {
+    throw new Error('Cannot complete notification claim: HANA Cloud service is not bound.');
+  }
+
+  await cds.db.run(
+    UPDATE(getClaimEntity())
+      .set({ status, outcomeCode, completedAt: new Date() })
+      .where({ idempotencyKey, status: 'CLAIMED' })
+  );
+}
+
 async function markResolved(purchaseOrder, item, resolvedDate = new Date()) {
   if (!cds.db || !hasHanaBinding()) {
     throw new Error('Cannot mark notification resolved: HANA Cloud service is not bound.');
@@ -209,7 +260,10 @@ module.exports = {
   addWorkingDays,
   attachTrackingState,
   autoResolveTrackedItems,
+  claimNotification,
   checkTrackingLog,
+  completeNotificationClaim,
+  createNotificationIdempotencyKey,
   findCandidates,
   isEligibleForNotification,
   isHanaTrackingAvailable,

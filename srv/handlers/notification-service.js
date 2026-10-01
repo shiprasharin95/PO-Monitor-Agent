@@ -30,38 +30,37 @@ function validateRecipientEmail(email, { allowExternal = false } = {}) {
   return recipient;
 }
 
-function sanitizeText(value) {
-  return String(value ?? '')
-    .replace(/[\u0000-\u001F\u007F]/g, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function sanitizePOForAI(pos = []) {
-  const allowedFields = new Set([
-    'purchaseOrder', 'item', 'orderQuantity', 'gapQuantity', 'openPurchaseOrderQuantity',
-    'orderUnit', 'material', 'materialDescription', 'performancePeriodEndDate',
-    'scheduleLineDeliveryDate', 'servicePerformer', 'servicePerformerName', 'wbsElement',
-    'workPackage', 'projectId', 'projectName', 'workPackageId', 'workPackageName',
-    'costCenter', 'costCenterResponsible', 'projectManagerId', 'projectManagerName',
-    'projectManagerEmail', 'ownerEmail', 'ownerName', 'ownerSource', 'lastNotified',
-    'resolved', 'notificationEligible', 'notificationStatus', 'isCompletelyDelivered',
-    'deletionCode'
-  ]);
+  const grouped = new Map();
+  const safeCode = value => {
+    const code = String(value || '').trim();
+    return /^[A-Za-z0-9._-]{1,64}$/.test(code) ? code : 'unknown';
+  };
+  const safeQuantity = value => {
+    const quantity = Number(value);
+    return Number.isFinite(quantity) && quantity >= 0 ? quantity : 0;
+  };
 
-  return pos.map(po => {
-    const sanitized = {};
-    for (const [key, value] of Object.entries(po || {})) {
-      if (!allowedFields.has(key)) continue;
-      if (typeof value === 'string') {
-        sanitized[key] = sanitizeText(value);
-      } else if (value !== undefined && value !== null) {
-        sanitized[key] = value;
-      }
-    }
-    return sanitized;
-  });
+  for (const po of pos) {
+    const materialCode = safeCode(po?.material);
+    const orderUnit = safeCode(po?.orderUnit);
+    const key = JSON.stringify([materialCode, orderUnit]);
+    const group = grouped.get(key) || {
+      materialCode,
+      orderUnit,
+      itemCount: 0,
+      totalOrderQuantity: 0,
+      totalOpenQuantity: 0
+    };
+    group.itemCount += 1;
+    group.totalOrderQuantity += safeQuantity(po?.orderQuantity);
+    group.totalOpenQuantity += safeQuantity(po?.openPurchaseOrderQuantity);
+    grouped.set(key, group);
+  }
+
+  return [...grouped.values()]
+    .sort((left, right) => right.totalOpenQuantity - left.totalOpenQuantity)
+    .slice(0, 50);
 }
 
 function getGraphMail() {

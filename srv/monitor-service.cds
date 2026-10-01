@@ -1,4 +1,4 @@
-@requires: 'POMonitorUser'
+@requires: 'User'
 service MonitorService {
 
   type PO {
@@ -13,7 +13,6 @@ service MonitorService {
     performancePeriodEndDate : Date;
     scheduleLineDeliveryDate : Date;
     servicePerformer      : String;
-    servicePerformerName  : String;
     wbsElement            : String;
     workPackage           : String;
     projectId             : String;
@@ -21,13 +20,6 @@ service MonitorService {
     workPackageId         : String;
     workPackageName       : String;
     costCenter            : String;
-    costCenterResponsible : String;
-    projectManagerId      : String;
-    projectManagerName    : String;
-    projectManagerEmail   : String;
-    ownerEmail            : String;
-    ownerName             : String;
-    ownerSource           : String;
     lastNotified          : Timestamp;
     resolved              : Boolean;
     notificationEligible  : Boolean;
@@ -46,7 +38,6 @@ service MonitorService {
   type NotificationFailure {
     purchaseOrder : String;
     item          : String;
-    recipient     : String;
     error         : String;
   }
 
@@ -54,8 +45,6 @@ service MonitorService {
     purchaseOrder : String;
     item          : String;
     status        : String;
-    recipient     : String;
-    ownerSource   : String;
     isReminder    : Boolean;
     lastNotified  : Timestamp;
     error         : String;
@@ -73,7 +62,6 @@ service MonitorService {
     items               : array of NotificationOutcome;
     failures            : array of NotificationFailure;
     reason              : String;
-    notificationSender  : String;
     trackingStore       : String;
   }
 

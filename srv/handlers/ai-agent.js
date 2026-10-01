@@ -1,25 +1,25 @@
 const { OrchestrationClient } = require('@sap-ai-sdk/orchestration');
-const { fetchOpenPOs, fetchTrackedPOStatus, resolveCommercialProject, resolveCostCenterResponsible, resolveWbsOwner } = require('./po-reader');
-const { attachTrackingState, autoResolveTrackedItems, checkTrackingLog, isHanaTrackingAvailable, recordNotification } = require('./notification-tracking');
+const { fetchOpenPOs, fetchTrackedPOStatus, resolveCommercialProject } = require('./po-reader');
+const { attachTrackingState, autoResolveTrackedItems, checkTrackingLog, claimNotification, completeNotificationClaim, isHanaTrackingAvailable, recordNotification } = require('./notification-tracking');
 const { sendPONotification, sanitizePOForAI } = require('./notification-service');
 
 const AI_MODEL = process.env.AI_AGENT_MODEL || 'gpt-4o-mini';
 const MAX_REACT_STEPS = 8;
 const AGENT_SYSTEM_PROMPT = `
 You are an autonomous SAP procurement monitoring agent running on SAP BTP.
-For each daily run, use the registered tools in this order: fetch overdue purchase order items, resolve each item's WBS owner and project manager, check each item's tracking log, then send first notifications or reminders only to the project manager for eligible unresolved items. If the project-manager email is missing, skip the notification; never use the WBS owner or a default mailbox as a recipient. HANA tracking suppresses reminders until five working days have elapsed. Summarize the number of purchase orders found, notifications sent, skipped items, suppressed items, and resolved items.
+For each daily run, use the registered tools in this order: fetch overdue purchase order items, resolve project-manager emails, check tracking, then send eligible notifications to the project manager only. If no single project-manager email is available, skip the notification. HANA tracking suppresses reminders until five working days have elapsed. The application performs all item-level operations; do not request or reveal item identifiers or contact details. Summarize only aggregate counts.
 Only select a tool that is explicitly allowed in the current context. The application executes tools and supplies their observations. Never claim a tool ran unless its result appears in observations. Do not invent data or expose private chain-of-thought. Return only one JSON object: {"tool":"<allowed tool name>","arguments":{}}.
 `.trim();
 
 const REACT_TOOLS = {
   fetch_overdue_pos: 'Fetch overdue service PO items that are not deleted or completely delivered from S/4HANA.',
-  resolve_wbs_owner: 'Resolve WBS owner and project-manager details for every fetched item; do not substitute a default email address.',
+  resolve_project_manager: 'Resolve a single project-manager email for each item using server-side project data. Do not return names or addresses.',
   check_tracking_log: 'Check HANA notification history and apply resolved and five-working-day rules.',
   send_notification: 'Send notifications for all eligible items and record only successful deliveries.'
 };
 
 const SUMMARY_SYSTEM_PROMPT = `
-Return only a JSON object with string fields businessSummary and notableConcentration. Use only supplied PO facts. businessSummary must be one short sentence about the main material/service pattern. notableConcentration must be one short sentence naming no more than three purchase orders or notable exceptions. Do not include counts, quantity totals, or extra fields.
+Return only a JSON object with string fields businessSummary and notableConcentration. Use only supplied aggregated material codes, units, and quantities. businessSummary must be one short sentence describing the material-code pattern. notableConcentration must describe no more than three material-code groups with high open quantities. Never request or infer purchase-order IDs, names, emails, project/WBS details, or other identifiers. Do not include extra fields.
 `.trim();
 
 function logAgentEvent(event, details = {}) {
@@ -29,6 +29,19 @@ function logAgentEvent(event, details = {}) {
     ...details
   };
   console.log(JSON.stringify(payload));
+}
+
+function redactPOsForResponse(pos) {
+  return pos.map(({
+    projectManagerEmail,
+    projectManagerName,
+    projectManagerId,
+    ownerEmail,
+    ownerName,
+    ownerSource,
+    costCenterResponsible,
+    ...po
+  }) => po);
 }
 
 async function fetchAndSummarizeOpenPOs({ processNotifications = false } = {}) {
@@ -63,8 +76,6 @@ async function fetchAndSummarizeOpenPOs({ processNotifications = false } = {}) {
         purchaseOrder: po.purchaseOrder,
         item: po.item,
         status: po.notificationStatus || 'not-processed',
-        recipient: po.projectManagerEmail || null,
-        ownerSource: po.ownerSource || null,
         isReminder: false,
         lastNotified: po.lastNotified || null,
         error: null
@@ -116,7 +127,7 @@ async function runReActAgent() {
     autoResolved = await autoResolveTrackedItems(fetchTrackedPOStatus);
   } catch (error) {
     autoResolveFailure = error;
-    logAgentEvent('hana-tracking-unavailable', { stage: 'auto-resolution', error: error.message });
+    logAgentEvent('hana-tracking-unavailable', { stage: 'auto-resolution', errorCode: String(error.code || error.name || 'HANA_ERROR').slice(0, 80) });
   }
 
   const client = createAgentClient();
@@ -128,12 +139,12 @@ async function runReActAgent() {
 
   while (step < MAX_REACT_STEPS) {
     const rows = [...entries.values()];
-    const pendingOwners = rows.filter(entry => !entry.ownerResolved);
+    const pendingManagers = rows.filter(entry => !entry.managerResolved);
     const pendingTracking = rows.filter(entry => !entry.tracking);
     const pendingDelivery = rows.filter(entry => entry.tracking?.eligible && !entry.deliveryAttempted);
     const nextTool = !fetched
       ? 'fetch_overdue_pos'
-      : pendingOwners.length ? 'resolve_wbs_owner'
+      : pendingManagers.length ? 'resolve_project_manager'
         : pendingTracking.length ? 'check_tracking_log'
           : pendingDelivery.length ? 'send_notification'
             : null;
@@ -143,14 +154,17 @@ async function runReActAgent() {
     const context = {
       runDate: new Date().toISOString().slice(0, 10),
       allowedTools: [{ name: nextTool, description: REACT_TOOLS[nextTool] }],
-      pendingItems: nextTool === 'resolve_wbs_owner'
-        ? pendingOwners.map(({ po }) => ({ purchaseOrder: po.purchaseOrder, item: po.item, wbsElement: po.wbsElement }))
+      pendingItemCount: nextTool === 'resolve_project_manager'
+        ? pendingManagers.length
         : nextTool === 'check_tracking_log'
-          ? pendingTracking.map(({ po }) => ({ purchaseOrder: po.purchaseOrder, item: po.item }))
-          : nextTool === 'send_notification'
-            ? pendingDelivery.map(({ po }) => ({ purchaseOrder: po.purchaseOrder, item: po.item }))
-            : [],
-      observations: observations.slice(-4)
+          ? pendingTracking.length
+          : nextTool === 'send_notification' ? pendingDelivery.length : 0,
+      observations: observations.slice(-4).map(entry => ({
+        tool: entry.tool,
+        itemCount: Array.isArray(entry.result)
+          ? entry.result.length
+          : Number(entry.result?.count || 0)
+      }))
     };
     const response = await client.chatCompletion({ placeholderValues: { context: JSON.stringify(context) } });
     const action = parseToolSelection(response.getContent());
@@ -160,50 +174,32 @@ async function runReActAgent() {
 
     let observation;
     if (action.tool === 'fetch_overdue_pos') {
-      pos = await fetchOpenPOs({ resolveOwners: false });
+      pos = await fetchOpenPOs();
       for (const po of pos) entries.set(`${po.purchaseOrder}:${po.item}`, {
         po,
-        ownerResolved: false,
+        managerResolved: false,
         tracking: null,
         deliveryAttempted: false,
         delivery: null
       });
       fetched = true;
-      observation = { count: pos.length, items: pos.map(po => ({ purchaseOrder: po.purchaseOrder, item: po.item })) };
+      observation = { count: pos.length };
       logAgentEvent('open-po-fetch-complete', { count: pos.length });
-    } else if (action.tool === 'resolve_wbs_owner') {
+    } else if (action.tool === 'resolve_project_manager') {
       observation = [];
-      for (const entry of pendingOwners) {
+      for (const entry of pendingManagers) {
         const wbsElements = [...new Set((entry.po.wbsElement || '').split(',').map(value => value.trim()).filter(Boolean))];
-        const costCenters = [...new Set((entry.po.costCenter || '').split(',').map(value => value.trim()).filter(Boolean))];
-        const wbsElement = wbsElements[0];
-        const owner = await resolveWbsOwner(
-          wbsElement,
-          entry.po.wbsElementInternalId?.split(',')[0]?.trim()
-        );
-        Object.assign(entry.po, owner);
-        if (wbsElements.length) {
-          const projectDetails = await Promise.all(wbsElements.map(wbs => resolveCommercialProject(wbs, undefined, {
-            purchaseOrder: entry.po.purchaseOrder,
-            item: entry.po.item
-          })));
-          for (const field of ['projectId', 'projectName', 'workPackageId', 'workPackageName', 'projectManagerId', 'projectManagerName', 'projectManagerEmail']) {
-            entry.po[field] = [...new Set(projectDetails.map(details => details[field]).filter(Boolean))].join(', ');
-          }
-        } else if (costCenters.length) {
-          const responsibleNames = await Promise.all(costCenters.map(costCenter => resolveCostCenterResponsible(costCenter, undefined, {
-            purchaseOrder: entry.po.purchaseOrder,
-            item: entry.po.item
-          })));
-          entry.po.costCenterResponsible = [...new Set(responsibleNames.filter(Boolean))].join(', ');
-        }
-        entry.ownerResolved = true;
+        const projectDetails = await Promise.all(wbsElements.map(wbs => resolveCommercialProject(
+          wbs,
+          undefined,
+          { includeProjectManager: true }
+        )));
+        const managerEmails = [...new Set(projectDetails.map(details => details.projectManagerEmail).filter(Boolean))];
+        entry.po.projectManagerEmail = managerEmails.length === 1 ? managerEmails[0] : '';
+        entry.managerResolved = true;
         observation.push({
-          purchaseOrder: entry.po.purchaseOrder,
-          item: entry.po.item,
-          ownerSource: owner.ownerSource,
-          projectId: entry.po.projectId || '',
-          costCenterResponsible: entry.po.costCenterResponsible || ''
+          projectManagerAvailable: managerEmails.length === 1,
+          projectManagerAmbiguous: managerEmails.length > 1
         });
       }
     } else if (action.tool === 'check_tracking_log') {
@@ -213,7 +209,7 @@ async function runReActAgent() {
           entry.tracking = await checkTrackingLog(entry.po.purchaseOrder, entry.po.item);
         } catch (error) {
           entry.tracking = { status: 'tracking-unavailable', eligible: false, resolved: false, lastNotified: null };
-          logAgentEvent('hana-tracking-unavailable', { stage: 'item-check', purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, error: error.message });
+          logAgentEvent('hana-tracking-unavailable', { stage: 'item-check', errorCode: String(error.code || error.name || 'HANA_ERROR').slice(0, 80) });
         }
         Object.assign(entry.po, {
           lastNotified: entry.tracking.lastNotified,
@@ -232,35 +228,64 @@ async function runReActAgent() {
           observation.push({ purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, ...entry.delivery });
           continue;
         }
+        if (autoResolveFailure) {
+          entry.delivery = { status: 'failed', error: 'Auto-resolution failed; notification withheld.' };
+          observation.push({ purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, ...entry.delivery });
+          continue;
+        }
+
+        let idempotencyKey;
         try {
-          if (autoResolveFailure) throw new Error('Auto-resolution failed; notifications withheld.');
+          idempotencyKey = await claimNotification(
+            entry.po.purchaseOrder,
+            entry.po.item,
+            entry.tracking.lastNotified
+          );
+          if (!idempotencyKey) {
+            entry.delivery = { status: 'skipped', error: 'This notification period was already claimed; automatic resend was blocked.' };
+            observation.push({ purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, ...entry.delivery });
+            continue;
+          }
+
           const delivery = await sendPONotification(entry.po, {
             isReminder: Boolean(entry.tracking.lastNotified)
           });
-          await recordNotification(entry.po.purchaseOrder, entry.po.item, delivery.recipient);
           entry.delivery = { status: 'sent', recipient: delivery.recipient };
         } catch (error) {
-          entry.delivery = { status: 'failed', error: error.message };
+          if (idempotencyKey) {
+            await completeNotificationClaim(idempotencyKey, 'FAILED', String(error.code || error.name || 'DELIVERY_ERROR').slice(0, 80)).catch(() => {});
+          }
+          entry.delivery = { status: 'failed', error: 'Delivery failed; the claim blocks automatic retries for this notification period. Verify delivery before retrying.' };
           logAgentEvent('po-notification-failed', {
-            purchaseOrder: entry.po.purchaseOrder,
-            item: entry.po.item,
-            error: error.message
+            errorCode: String(error.code || error.name || 'DELIVERY_ERROR').slice(0, 80)
           });
+        }
+
+        if (entry.delivery?.status === 'sent') {
+          try {
+            await completeNotificationClaim(idempotencyKey, 'SENT');
+            await recordNotification(entry.po.purchaseOrder, entry.po.item, entry.delivery.recipient);
+          } catch (error) {
+            entry.delivery.error = 'Email was sent but HANA tracking could not be updated; the claim prevents automatic duplicate delivery.';
+            logAgentEvent('notification-tracking-write-failed', {
+              errorCode: String(error.code || error.name || 'HANA_WRITE_ERROR').slice(0, 80)
+            });
+          }
         }
         observation.push({ purchaseOrder: entry.po.purchaseOrder, item: entry.po.item, ...entry.delivery });
       }
     }
 
     observations.push({ tool: action.tool, result: observation });
-    const auditResult = action.tool === 'resolve_wbs_owner'
-      ? observation.map(({ purchaseOrder, item, ownerSource }) => ({ purchaseOrder, item, ownerSource }))
+    const auditResult = action.tool === 'resolve_project_manager'
+      ? { itemCount: observation.length, resolvedCount: observation.filter(item => item.projectManagerAvailable).length }
       : Array.isArray(observation) ? { itemCount: observation.length } : observation;
     logAgentEvent('react-tool-observed', { tool: action.tool, step: step + 1, result: auditResult });
     step += 1;
   }
 
   const remaining = [...entries.values()].some(entry =>
-    !entry.ownerResolved || !entry.tracking || (entry.tracking.eligible && !entry.deliveryAttempted)
+    !entry.managerResolved || !entry.tracking || (entry.tracking.eligible && !entry.deliveryAttempted)
   );
   if (!fetched || remaining) {
     throw new Error('AI agent did not complete the required tool workflow within the step limit.');
@@ -287,8 +312,6 @@ async function runReActAgent() {
       purchaseOrder: entry.po.purchaseOrder,
       item: entry.po.item,
       status: entry.delivery?.status || entry.tracking?.status || 'not-processed',
-      recipient: entry.delivery?.recipient || entry.po.projectManagerEmail || null,
-      ownerSource: entry.po.ownerSource || null,
       isReminder: Boolean(entry.delivery?.status === 'sent' && entry.tracking?.lastNotified),
       lastNotified: entry.tracking?.lastNotified || null,
       error: entry.delivery?.error || null
@@ -296,11 +319,9 @@ async function runReActAgent() {
     failures: failed.map(entry => ({
       purchaseOrder: entry.po.purchaseOrder,
       item: entry.po.item,
-      recipient: entry.po.projectManagerEmail || '',
       error: entry.delivery.error
     })),
-    reason: autoResolveFailure?.message || (!trackingEnabled ? 'HANA tracking unavailable; notifications withheld.' : null),
-    notificationSender: process.env.MAIL_FROM || 'cap-notifications@bearingpoint.com',
+    reason: autoResolveFailure ? 'Auto-resolution failed; notifications were withheld.' : (!trackingEnabled ? 'HANA tracking unavailable; notifications withheld.' : null),
     trackingStore: trackingEnabled ? 'hana-cloud' : 'dry-run'
   };
   const summary = await summarizePOs(pos, {
@@ -309,9 +330,18 @@ async function runReActAgent() {
     suppressedItems: suppressed.length,
     resolvedItems: resolved.length + autoResolved
   });
-  logAgentEvent('open-po-agent-complete', { count: pos.length, ...tracking });
+  logAgentEvent('open-po-agent-complete', {
+    count: pos.length,
+    notified: tracking.notified,
+    failed: tracking.failed,
+    skipped: tracking.skipped,
+    suppressed: tracking.suppressed,
+    resolved: tracking.resolved,
+    autoResolved: tracking.autoResolved,
+    trackingStore: tracking.trackingStore
+  });
 
-  return { summary, count: pos.length, pos, tracking };
+  return { summary, count: pos.length, pos: redactPOsForResponse(pos), tracking };
 }
 
 // Calls the configured SAP AI Core Orchestration model for a grounded run summary.
@@ -372,7 +402,7 @@ async function summarizePOs(pos, runContext = {}) {
     lines.push(`Notable Concentration: ${notableConcentration}`);
     return lines.join('\n');
   } catch (err) {
-    logAgentEvent('ai-summary-fallback', { error: err.message, count: rows.length });
+    logAgentEvent('ai-summary-fallback', { errorCode: String(err.code || err.name || 'AI_ERROR').slice(0, 80), count: rows.length });
     const repeatedOrders = [...rows.reduce((counts, po) => counts.set(po.purchaseOrder, (counts.get(po.purchaseOrder) || 0) + 1), new Map())]
       .filter(([, count]) => count > 1)
       .sort((left, right) => right[1] - left[1])
@@ -384,4 +414,4 @@ async function summarizePOs(pos, runContext = {}) {
   }
 }
 
-module.exports = { summarizePOs, fetchAndSummarizeOpenPOs };
+module.exports = { summarizePOs, fetchAndSummarizeOpenPOs, redactPOsForResponse };

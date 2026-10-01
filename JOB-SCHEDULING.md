@@ -15,7 +15,8 @@ Cloud Foundry application: po-monitor-demo-test
         |
         v
       AI-guided tool loop: fetch overdue POs, resolve WBS owners,
-      check HANA tracking, and send eligible GraphMail notifications
+      check HANA tracking, claim eligible notifications, and send GraphMail
+      only to a resolved project manager
         |
         v
       Return summary, PO items, and tracking/delivery counts as JSON
@@ -31,16 +32,16 @@ Cloud Foundry application:
 po-monitor-demo-test
 ```
 
-Application route:
+Public application route (App Router):
 
 ```text
-https://po-monitor-demo-test.cfapps.eu20-001.hana.ondemand.com
+https://po-monitor-demo-approuter.cfapps.eu20-001.hana.ondemand.com
 ```
 
 UI5 application:
 
 ```text
-https://po-monitor-demo-test.cfapps.eu20-001.hana.ondemand.com/po-monitor-ui/webapp/index.html
+https://po-monitor-demo-approuter.cfapps.eu20-001.hana.ondemand.com/po-monitor-ui/webapp/index.html
 ```
 
 Health/root endpoint:
@@ -52,10 +53,13 @@ GET /
 Scheduler trigger endpoint:
 
 ```text
-POST https://po-monitor-demo-test.cfapps.eu20-001.hana.ondemand.com/run
+POST https://po-monitor-demo-approuter.cfapps.eu20-001.hana.ondemand.com/run
 ```
 
 No request body is required for `POST /run`.
+The backend is private. Do not configure the scheduler to call its internal
+`apps.internal` route or to call `/run` anonymously. The request must carry a
+valid XSUAA token with the `JobRunner` scope; `User` scope alone is insufficient.
 
 ## 3. Code changes for the trigger
 
@@ -64,15 +68,17 @@ No request body is required for `POST /run`.
 The custom CAP bootstrap registers two routes:
 
 - `GET /` returns a simple health message.
-- `POST /run` calls `fetchAndSummarizeOpenPOs()` and returns the result.
+- `POST /run` requires the XSUAA `JobRunner` scope, then calls
+  `fetchAndSummarizeOpenPOs()` and returns a redacted result.
 
 The `POST /run` flow is:
 
 1. Call `fetchAndSummarizeOpenPOs({ processNotifications: true })`.
 2. Use SAP AI Core Orchestration (default model `gpt-4o-mini`) to select each next tool in the bounded ReAct workflow.
-3. Fetch overdue service items that are not deleted or completely delivered, regardless of whether open quantity equals ordered quantity; resolve owners; evaluate HANA tracking; send eligible first notices or reminders through GraphMail.
-4. Return `status`, `source`, `summary`, `count`, `pos`, and tracking/delivery counts as JSON.
-5. Return HTTP 500 if the tool workflow cannot complete safely.
+3. Fetch overdue service items; resolve WBS and project-manager details; evaluate HANA tracking; claim each eligible notification period in HANA before sending.
+4. Send GraphMail only to the project manager. If the project-manager email is missing, skip the item; never fall back to the WBS owner or a default mailbox.
+5. Return `status`, `source`, `summary`, `count`, `pos`, and redacted tracking counts as JSON.
+6. Return a generic HTTP 500 response with an incident ID if the workflow fails; detailed exception text is not returned to the caller.
 
 The file also explicitly starts the CAP server with `cds.server()`. This was required because the first custom entrypoint only registered a bootstrap hook and exited immediately in Cloud Foundry.
 
@@ -96,8 +102,8 @@ The scheduled endpoint runs the notification agent; the CAP UI action remains re
 
 - `fetchAndSummarizeOpenPOs({ processNotifications: true })` runs the tool loop.
 - Tool selection uses `AI_AGENT_MODEL` or defaults to `gpt-4o-mini`; PO business checks and notification delivery remain server-side.
-- HANA tracking failure prevents duplicate-prone delivery; failed sends are not recorded as delivered.
-- Structured logs record tool observations and owner fallback sources, not private chain-of-thought.
+- HANA tracking failure prevents delivery. A unique HANA claim blocks concurrent and automatic repeat sends for the same notification period.
+- Structured logs contain aggregate counts and error codes only, not recipients, PO item details, or raw exception text.
 
 ## 4. Cron expression
 

@@ -12,3 +12,14 @@ entity PO_NOTIFICATION_LOG : managed {
   resolved      : Boolean default false;
   resolvedDate  : Date;
 }
+
+entity PO_NOTIFICATION_CLAIM {
+  key idempotencyKey : String(64);
+
+  purchaseOrder : String(20);
+  item          : String(10);
+  status        : String(16);
+  outcomeCode   : String(80);
+  claimedAt     : Timestamp @cds.on.insert: $now;
+  completedAt   : Timestamp;
+}
