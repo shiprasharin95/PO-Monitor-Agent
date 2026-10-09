@@ -13,7 +13,18 @@
   },
   "cds": {
     "requires": {
-      "auth": "xsuaa",
+      "auth": {
+        "kind": "xsuaa",
+        "[development]": {
+          "kind": "mocked",
+          "users": {
+            "alice": {
+              "password": "alice",
+              "roles": ["User"]
+            }
+          }
+        }
+      },
       "db": {
         "pool": {
           "acquireTimeoutMillis": 15000
